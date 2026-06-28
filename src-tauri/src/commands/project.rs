@@ -8,6 +8,7 @@
 
 use tauri::State;
 
+use crate::app_config::AppType;
 use crate::database::Project;
 use crate::services::{CreateProjectRequest, ProjectService, UpdateProjectRequest};
 use crate::store::AppState;
@@ -79,15 +80,32 @@ pub fn write_project_claude_settings(
     Ok(path.to_string_lossy().to_string())
 }
 
-/// 在项目目录打开终端。
-/// TODO(M3): 复用 open_provider_terminal，cwd 改为 project.path。
+/// 在项目目录打开终端并启动 claude（用项目绑定的 Claude provider）。
+///
+/// 复用 `open_provider_terminal` 的跨平台终端启动逻辑：cwd = 项目根，
+/// 注入项目绑定 provider 的配置。这直接实现「每个项目 CLI 用不同 provider」——
+/// 不同项目目录启动的 claude 进程天然读各自的 provider 配置。
+/// （若只想打开空终端手动操作，用 `copy_project_launch_command` 复制启动命令。）
 #[tauri::command]
 pub async fn open_project_terminal(
+    state: State<'_, AppState>,
     #[allow(non_snake_case)] projectId: String,
 ) -> Result<bool, String> {
-    Err(format!(
-        "open_project_terminal 尚未实现（M3 阶段）；project_id={projectId}"
-    ))
+    let project = ProjectService::get(&state.db, &projectId)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("项目 {projectId} 不存在"))?;
+    let provider_id = project
+        .claude_provider_id
+        .clone()
+        .ok_or_else(|| "项目未绑定 Claude provider，无法启动".to_string())?;
+
+    crate::commands::open_provider_terminal(
+        state,
+        AppType::Claude.as_str().to_string(),
+        provider_id,
+        Some(project.path.clone()),
+    )
+    .await
 }
 
 /// 返回在项目目录启动 claude 的命令字符串（供前端复制到剪贴板）。
