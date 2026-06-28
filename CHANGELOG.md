@@ -5,6 +5,19 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Project Workspace（fork 新功能）
+
+### Added
+
+- **项目工程目录管理（Project Workspaces）**：新增独立「项目」标签页，可注册多个项目工程目录，每个项目绑定一个 Claude provider。激活时把 provider 配置写入 `<项目根>/.claude/settings.json`，利用 Claude Code 原生的项目级 settings.json 优先级（local > project > user），实现「在不同项目目录启动的 claude 进程各自用不同 provider」的真正多实例场景。
+  - 项目 CRUD + 软删除/恢复；项目元数据随数据库云同步，项目路径设备级
+  - 选定 provider 后自动 best-effort 写入项目根（路径不存在只警告，可手动「重新写入」重试）
+  - 写入前自动备份现有 `settings.json` 到 `.ccs.bak`，原子写入（temp + rename）
+  - 「在项目打开终端」（复用 open_provider_terminal，在项目目录启动 claude）+「复制启动命令」+「重新写入」
+  - SQLite schema v11→v12 加 projects 表（幂等迁移）；11 个 Tauri command；31 个后端单元测试
+  - i18n：en/zh/zh-TW/ja 四语言
+  - MVP 范围仅 Claude（Codex/Gemini/OpenCode 等的项目级支持后续迭代）
+
 ## [3.16.4] - 2026-06-27
 
 Development since v3.16.3 focuses on tightening the Codex proxy path — native OpenAI Responses migration for the major Chinese providers, a decoupled upstream-format selector, zstd request/error-body decompression, and a run of tool-call and OAuth-over-proxy fixes — alongside richer usage and pricing tooling (models.dev pricing import, Volcengine Ark coding/agent-plan quotas, live-tracking date ranges, GLM-5.2/Doubao Seed 2.1 pricing), new proxy and resilience capabilities (custom request header/body overrides, an in-app recovery screen for too-new databases, native Windows ARM64 builds), and a broad wave of preset and branding updates (the SubRouter and OpenCode Go subscriptions, the CTok→ETok rename, Kimi rebranding and prime-partner badges, and a Kimi K2.7 Code sponsor banner).
