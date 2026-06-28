@@ -295,6 +295,36 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 19. Projects 表 (项目工程目录管理 — 每个项目绑定一个 Claude provider)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                description TEXT,
+                claude_provider_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                last_written_at INTEGER,
+                deleted_at INTEGER,
+                sort_index INTEGER,
+                icon TEXT,
+                icon_color TEXT
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted_at)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_sort ON projects(deleted_at, sort_index)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -443,6 +473,11 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（添加项目工程目录管理 projects 表）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1267,6 +1302,44 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12 迁移：添加项目工程目录管理 projects 表
+    ///
+    /// projects 是全新表，CREATE TABLE IF NOT EXISTS 天然幂等；老库升级与新库
+    /// 初始化（user_version=0 一路迁到 12）都会经过这里。
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                description TEXT,
+                claude_provider_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                last_written_at INTEGER,
+                deleted_at INTEGER,
+                sort_index INTEGER,
+                icon TEXT,
+                icon_color TEXT
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v11 -> v12 创建 projects 表失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted_at)",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!("v11 -> v12 创建 idx_projects_deleted 失败: {e}"))
+        })?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_sort ON projects(deleted_at, sort_index)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v11 -> v12 创建 idx_projects_sort 失败: {e}")))?;
         Ok(())
     }
 

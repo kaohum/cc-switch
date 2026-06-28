@@ -439,6 +439,12 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
 
+    // ===== 当前激活项目（设备级，不随云同步）=====
+    /// 当前激活的项目工程目录 ID。项目元数据随数据库同步，但「哪台机器当前
+    /// 在用哪个项目」是设备级状态，存 settings.json 不进同步流。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_project_id: Option<String>,
+
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
@@ -524,6 +530,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            current_project_id: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,

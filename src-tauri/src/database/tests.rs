@@ -427,6 +427,52 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn migration_v11_to_v12_creates_projects_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 模拟 v11 库：projects 表尚不存在
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    // user_version 升到 12（= SCHEMA_VERSION）
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+
+    // projects 表已创建、可查询、初始为空
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+        .expect("projects table queryable after migration");
+    assert_eq!(count, 0);
+
+    // schema 字段齐全且可插入（claude_provider_id / deleted_at / last_written_at 等可空列接受 NULL）
+    conn.execute(
+        "INSERT INTO projects (id, name, path, created_at, updated_at) \
+         VALUES ('p1', 'Test', '/tmp/test', 1, 2)",
+        [],
+    )
+    .expect("insert project row");
+    let (name, provider, deleted, last_written): (
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+    ) = conn
+        .query_row(
+            "SELECT name, claude_provider_id, deleted_at, last_written_at \
+             FROM projects WHERE id = 'p1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query project row");
+    assert_eq!(name, "Test");
+    assert!(provider.is_none(), "claude_provider_id 默认 NULL");
+    assert!(deleted.is_none(), "deleted_at 默认 NULL");
+    assert!(last_written.is_none(), "last_written_at 默认 NULL");
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
