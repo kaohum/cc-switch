@@ -19,6 +19,7 @@ import {
   BarChart2,
   Download,
   FolderArchive,
+  FolderKanban,
   Search,
   FolderOpen,
   KeyRound,
@@ -63,6 +64,7 @@ import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import { ProjectsPage } from "@/components/projects/ProjectsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
@@ -109,7 +111,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "projects";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -895,6 +898,8 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "projects":
+          return <ProjectsPage />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1170,6 +1175,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "projects" && t("projects.title")}
                 </h1>
               </div>
             ) : (
@@ -1502,6 +1508,15 @@ function App() {
                                 title={t("prompts.manage")}
                               >
                                 <Book className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("projects")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("projects.manage")}
+                              >
+                                <FolderKanban className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
