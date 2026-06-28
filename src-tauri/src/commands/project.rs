@@ -67,15 +67,16 @@ pub fn set_project_claude_provider(
         .map_err(|e| e.to_string())
 }
 
-/// 手动重新写入项目根 .claude/settings.json。
-/// TODO(M2): 复用 services/provider/live.rs 构造 settings + 原子写 + 备份。
+/// 手动重新写入项目根 .claude/settings.json（写前备份 + 原子写）。
+/// 返回实际写入的路径字符串。
 #[tauri::command]
 pub fn write_project_claude_settings(
+    state: State<'_, AppState>,
     #[allow(non_snake_case)] projectId: String,
 ) -> Result<String, String> {
-    Err(format!(
-        "write_project_claude_settings 尚未实现（M2 阶段）；project_id={projectId}"
-    ))
+    let path = ProjectService::write_claude_to_project(&state.db, &projectId)
+        .map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// 在项目目录打开终端。

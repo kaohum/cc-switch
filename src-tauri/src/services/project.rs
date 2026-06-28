@@ -4,13 +4,16 @@
 //! service 负责校验和编排。方法接受 `&Database`（不依赖 Tauri state），
 //! 便于用 `Database::memory()` 做单元测试。
 //!
-//! 写入项目根 `.claude/settings.json` 的逻辑在 M2 阶段加入；
-//! 当前 `set_claude_provider` 只更新数据库绑定。
+//! `set_claude_provider` 绑定后 best-effort 写入项目根 `.claude/settings.json`
+//! （路径不存在时只 warn，可用 `write_project_claude_settings` 手动重试）。
 
 use crate::app_config::AppType;
 use crate::database::Database;
 use crate::database::Project;
 use crate::error::AppError;
+use crate::services::provider::{
+    build_effective_settings_with_common_config, sanitize_claude_settings_for_live,
+};
 use serde::{Deserialize, Serialize};
 
 fn now_millis() -> i64 {
@@ -162,7 +165,7 @@ impl ProjectService {
     }
 
     /// 设置项目绑定的 Claude provider。
-    /// 校验 provider 存在；TODO(M2): 设置后自动写入项目根 .claude/settings.json。
+    /// 校验 provider 存在；绑定后 best-effort 写入项目根 .claude/settings.json。
     pub fn set_claude_provider(
         db: &Database,
         id: &str,
@@ -188,6 +191,16 @@ impl ProjectService {
         } else {
             db.update_project_provider(id, None, now_millis())?;
         }
+
+        // best-effort 写入项目根 .claude/settings.json（路径不存在时只 warn，
+        // 不阻塞绑定；用户可稍后用 write_project_claude_settings 手动重试）
+        if normalized.is_some() {
+            if let Err(e) = Self::write_claude_to_project(db, id) {
+                log::warn!(
+                    "项目 {id} 绑定 provider 后写入 .claude/settings.json 失败（可稍后手动重试）: {e}"
+                );
+            }
+        }
         Self::require_project(db, id)
     }
 
@@ -201,6 +214,68 @@ impl ProjectService {
             )
         })
     }
+
+    /// 把项目绑定的 Claude provider 写入 `<项目根>/.claude/settings.json`。
+    ///
+    /// 复用 live.rs 的 effective settings 构造（含 common config merge）+ sanitize
+    /// （去掉 api_format 等内部字段）；写前备份现有 settings.json 到 `.ccs.bak`，
+    /// 原子写入（temp + rename）。路径不存在或未绑定 provider 时返回 Err。
+    pub fn write_claude_to_project(
+        db: &Database,
+        project_id: &str,
+    ) -> Result<std::path::PathBuf, AppError> {
+        let project = Self::require_project(db, project_id)?;
+        let provider_id = project.claude_provider_id.as_deref().ok_or_else(|| {
+            AppError::localized(
+                "project.no_provider",
+                "项目未绑定 Claude provider",
+                "Project has no Claude provider bound",
+            )
+        })?;
+        let provider = db
+            .get_provider_by_id(provider_id, AppType::Claude.as_str())?
+            .ok_or_else(|| {
+                AppError::localized(
+                    "project.provider_not_found",
+                    format!("Claude 供应商 {provider_id} 不存在"),
+                    format!("Claude provider {provider_id} not found"),
+                )
+            })?;
+
+        let project_root = std::path::PathBuf::from(&project.path);
+        if !project_root.is_dir() {
+            return Err(AppError::Config(format!(
+                "项目路径不存在或不是目录: {}",
+                project_root.display()
+            )));
+        }
+        let claude_dir = project_root.join(".claude");
+        std::fs::create_dir_all(&claude_dir).map_err(|e| AppError::io(&claude_dir, e))?;
+
+        let settings_path = claude_dir.join("settings.json");
+        // 写前备份现有 settings.json（用户可能手动编辑过）
+        if settings_path.exists() {
+            let backup = claude_dir.join("settings.json.ccs.bak");
+            if let Err(e) = std::fs::copy(&settings_path, &backup) {
+                log::warn!("备份 {} 失败: {e}", settings_path.display());
+            }
+        }
+
+        // 构造 effective settings + sanitize 去内部字段
+        let effective =
+            build_effective_settings_with_common_config(db, &AppType::Claude, &provider)?;
+        let sanitized = sanitize_claude_settings_for_live(&effective);
+
+        crate::config::write_json_file(&settings_path, &sanitized)?;
+
+        db.update_project_last_written_at(project_id, now_millis())?;
+        log::info!(
+            "项目 '{}' 的 Claude settings 已写入 {}",
+            project.name,
+            settings_path.display()
+        );
+        Ok(settings_path)
+    }
 }
 
 #[cfg(test)]
@@ -209,6 +284,7 @@ mod tests {
     use crate::database::Database;
     use crate::provider::Provider;
     use serde_json::json;
+    use tempfile::TempDir;
 
     fn req(name: &str, path: &str) -> CreateProjectRequest {
         CreateProjectRequest {
@@ -360,5 +436,89 @@ mod tests {
 
         let cleared = ProjectService::set_claude_provider(&db, &p.id, Some("   ")).expect("clear");
         assert!(cleared.claude_provider_id.is_none());
+    }
+
+    fn seed_provider_with_env(db: &Database, id: &str, base_url: &str) {
+        let provider = Provider::with_id(
+            id.into(),
+            id.into(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": base_url, "ANTHROPIC_AUTH_TOKEN": "tok" } }),
+            None,
+        );
+        db.save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider");
+    }
+
+    #[test]
+    fn write_claude_to_project_creates_settings_json_with_provider_env() {
+        let db = Database::memory().expect("memory db");
+        let dir = TempDir::new().expect("tmp");
+        let project_path = dir.path().to_string_lossy().to_string();
+        seed_provider_with_env(&db, "packy", "https://x.example");
+
+        let project = ProjectService::create(&db, req("A", &project_path)).expect("create");
+        // set_claude_provider 绑定后 best-effort 写入（路径存在 → 成功）
+        ProjectService::set_claude_provider(&db, &project.id, Some("packy")).expect("bind");
+
+        let settings = dir.path().join(".claude").join("settings.json");
+        assert!(settings.exists(), "绑定 provider 后应写入 settings.json");
+        let content = std::fs::read_to_string(&settings).expect("read");
+        let v: serde_json::Value = serde_json::from_str(&content).expect("parse json");
+        assert_eq!(v["env"]["ANTHROPIC_BASE_URL"], "https://x.example");
+        assert_eq!(v["env"]["ANTHROPIC_AUTH_TOKEN"], "tok");
+
+        let reloaded = ProjectService::get(&db, &project.id)
+            .expect("get")
+            .expect("present");
+        assert!(reloaded.last_written_at.is_some(), "last_written_at 应更新");
+    }
+
+    #[test]
+    fn write_claude_to_project_backs_up_existing_settings() {
+        let db = Database::memory().expect("memory db");
+        let dir = TempDir::new().expect("tmp");
+        let claude_dir = dir.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).expect("mkdir");
+        std::fs::write(claude_dir.join("settings.json"), b"{\"old\": true}").expect("write old");
+        seed_provider_with_env(&db, "packy", "https://y");
+
+        let project_path = dir.path().to_string_lossy().to_string();
+        let project = ProjectService::create(&db, req("A", &project_path)).expect("create");
+        ProjectService::set_claude_provider(&db, &project.id, Some("packy")).expect("bind");
+
+        let backup = claude_dir.join("settings.json.ccs.bak");
+        assert!(backup.exists(), "应备份旧 settings.json 到 .ccs.bak");
+        let backup_content = std::fs::read_to_string(&backup).expect("read backup");
+        assert!(backup_content.contains("old"), "备份应保留旧内容");
+    }
+
+    #[test]
+    fn write_claude_to_project_errors_when_path_missing() {
+        let db = Database::memory().expect("memory db");
+        seed_provider_with_env(&db, "packy", "https://z");
+        let project =
+            ProjectService::create(&db, req("A", "/nonexistent/ccs-test/xyz")).expect("create");
+        // 路径不存在：set_claude_provider 的 best-effort 写入失败但绑定成功
+        ProjectService::set_claude_provider(&db, &project.id, Some("packy")).expect("bind");
+
+        let err = ProjectService::write_claude_to_project(&db, &project.id).unwrap_err();
+        assert!(
+            matches!(err, AppError::Config(_)),
+            "路径不存在应返回 Config 错误"
+        );
+    }
+
+    #[test]
+    fn write_claude_to_project_errors_without_provider() {
+        let db = Database::memory().expect("memory db");
+        let dir = TempDir::new().expect("tmp");
+        let project_path = dir.path().to_string_lossy().to_string();
+        let project = ProjectService::create(&db, req("A", &project_path)).expect("create");
+
+        let err = ProjectService::write_claude_to_project(&db, &project.id).unwrap_err();
+        assert!(
+            matches!(err, AppError::Localized { .. }),
+            "未绑定 provider 应返回 Localized 错误"
+        );
     }
 }
