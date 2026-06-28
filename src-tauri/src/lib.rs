@@ -1282,6 +1282,18 @@ pub fn run() {
             commands::set_app_config_dir_override,
             // provider sort order management
             commands::update_providers_sort_order,
+            // Project workspace management
+            commands::list_projects,
+            commands::get_project,
+            commands::create_project,
+            commands::update_project,
+            commands::delete_project,
+            commands::restore_project,
+            commands::set_project_claude_provider,
+            commands::write_project_claude_settings,
+            commands::open_project_terminal,
+            commands::copy_project_launch_command,
+            commands::validate_project_path,
             // theirs: config import/export and dialogs
             commands::export_config_to_file,
             commands::import_config_from_file,
