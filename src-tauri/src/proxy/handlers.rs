@@ -38,7 +38,7 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{extract::{Path, State}, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
@@ -126,7 +126,7 @@ pub async fn handle_claude_desktop_messages(
         AppType::ClaudeDesktop,
         "Claude Desktop",
         "claude-desktop",
-        Some("/claude-desktop"),
+        Some("/claude-desktop".to_string()),
         None,
     )
     .await
@@ -148,13 +148,33 @@ pub async fn handle_claude_desktop_models(
     Ok(Json(response))
 }
 
+/// 项目级 Claude 消息端点（方案 A）：路径 `/claude/project/{project_id}/v1/messages`。
+/// 用项目绑定的 provider 路由（select_providers_for_project），实现多项目多 provider 同时经 proxy。
+pub async fn handle_project_messages(
+    State(state): State<ProxyState>,
+    Path(project_id): Path<String>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let strip = format!("/claude/project/{project_id}");
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::Claude,
+        "Claude",
+        "claude",
+        Some(strip),
+        Some(project_id.as_str()),
+    )
+    .await
+}
+
 async fn handle_messages_for_app(
     state: ProxyState,
     request: axum::extract::Request,
     app_type: AppType,
     tag: &'static str,
     app_type_str: &'static str,
-    strip_prefix: Option<&'static str>,
+    strip_prefix: Option<String>,
     project_id: Option<&str>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, body) = request.into_parts();
@@ -178,6 +198,7 @@ async fn handle_messages_for_app(
         .map(|path_and_query| path_and_query.as_str())
         .unwrap_or(uri.path());
     let endpoint = strip_prefix
+        .as_deref()
         .and_then(|prefix| raw_endpoint.strip_prefix(prefix))
         .unwrap_or(raw_endpoint);
 

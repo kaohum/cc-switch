@@ -296,6 +296,11 @@ impl ProxyServer {
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
+            // 项目工程目录级 Claude API（方案 A：按 project_id 路由各自 provider）
+            .route(
+                "/claude/project/:project_id/v1/messages",
+                post(handlers::handle_project_messages),
+            )
             // Claude Desktop 3P 本地 gateway（独立 provider namespace）
             .route(
                 "/claude-desktop/v1/models",
