@@ -101,6 +101,17 @@ impl ProjectService {
             icon_color: req.icon_color.filter(|s| !s.trim().is_empty()),
         };
         db.save_project(&project)?;
+
+        // 新建时若已绑定 provider，best-effort 写入项目根（与 set_claude_provider
+        // 一致；路径不存在时只 warn，用户可稍后用 write_project_claude_settings 重试）
+        if project.claude_provider_id.is_some() {
+            if let Err(e) = Self::write_claude_to_project(db, &project.id) {
+                log::warn!(
+                    "项目 {} 创建后写入 .claude/settings.json 失败（可稍后手动重试）: {e}",
+                    project.id
+                );
+            }
+        }
         Ok(project)
     }
 
@@ -519,6 +530,40 @@ mod tests {
         assert!(
             matches!(err, AppError::Localized { .. }),
             "未绑定 provider 应返回 Localized 错误"
+        );
+    }
+
+    #[test]
+    fn create_with_provider_writes_settings_json() {
+        let db = Database::memory().expect("memory db");
+        let dir = TempDir::new().expect("tmp");
+        let project_path = dir.path().to_string_lossy().to_string();
+        seed_provider_with_env(&db, "packy", "https://create-test");
+
+        let project = ProjectService::create(
+            &db,
+            CreateProjectRequest {
+                name: "A".into(),
+                path: project_path,
+                description: None,
+                claude_provider_id: Some("packy".into()),
+                icon: None,
+                icon_color: None,
+            },
+        )
+        .expect("create");
+
+        let settings = dir.path().join(".claude").join("settings.json");
+        assert!(
+            settings.exists(),
+            "create 带 provider 应自动写入项目根 settings.json"
+        );
+        let reloaded = ProjectService::get(&db, &project.id)
+            .expect("get")
+            .expect("present");
+        assert!(
+            reloaded.last_written_at.is_some(),
+            "last_written_at 应被设置"
         );
     }
 }

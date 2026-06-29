@@ -64,14 +64,14 @@ export function ProjectFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
-      <DialogContent>
+      <DialogContent className="p-6 sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
             {project ? t("projects.edit") : t("projects.create")}
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="space-y-1.5">
+        <div className="space-y-5">
+          <div className="space-y-2">
             <Label>{t("projects.name")}</Label>
             <Input
               value={name}
@@ -79,7 +79,7 @@ export function ProjectFormDialog({
               placeholder={t("projects.namePlaceholder")}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label>{t("projects.path")}</Label>
             <Input
               value={path}
@@ -88,7 +88,7 @@ export function ProjectFormDialog({
               className="font-mono text-xs"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label>{t("projects.description")}</Label>
             <Textarea
               value={description}
@@ -96,7 +96,7 @@ export function ProjectFormDialog({
               rows={2}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label>{t("projects.claudeProvider")}</Label>
             <ProviderSelectForProject
               value={providerId ?? undefined}
