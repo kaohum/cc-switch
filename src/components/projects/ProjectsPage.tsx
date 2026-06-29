@@ -188,7 +188,7 @@ export function ProjectsPage() {
               <div className="text-xs text-muted-foreground">
                 {t("projects.writeTarget")}:{" "}
                 <span className="font-mono">
-                  {selected.path}/.claude/settings.json
+                  {selected.path}/.claude/settings.local.json
                 </span>
               </div>
             </div>
