@@ -158,6 +158,9 @@ export function RequestLogTable({
                     {t("usage.time")}
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
+                    {t("usage.project", { defaultValue: "工程" })}
+                  </TableHead>
+                  <TableHead className="text-center whitespace-nowrap">
                     {t("usage.provider")}
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
@@ -208,6 +211,9 @@ export function RequestLogTable({
                               minute: "2-digit",
                             },
                           )}
+                        </TableCell>
+                        <TableCell className="text-center text-xs">
+                          {log.projectName || t("usage.noProject", { defaultValue: "—" })}
                         </TableCell>
                         <TableCell className="text-center">
                           {log.providerName || t("usage.unknownProvider")}

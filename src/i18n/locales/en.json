@@ -1411,6 +1411,7 @@
     "responseModel": "Response Model",
     "noData": "No data",
     "unknownProvider": "Unknown Provider",
+    "project": "Project",
     "stream": "Stream",
     "nonStream": "Non-stream",
     "source": "Source",

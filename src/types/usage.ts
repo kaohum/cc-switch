@@ -11,6 +11,8 @@ export interface RequestLog {
   requestId: string;
   providerId: string;
   providerName?: string;
+  /** 所属项目工程目录名（项目级路由归因；无则全局路由） */
+  projectName?: string;
   appType: string;
   model: string;
   requestModel?: string;

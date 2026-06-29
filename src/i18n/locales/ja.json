@@ -1411,6 +1411,7 @@
     "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
+    "project": "プロジェクト",
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
     "source": "ソース",
