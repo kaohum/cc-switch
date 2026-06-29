@@ -27,7 +27,8 @@ import {
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { useQuery } from "@tanstack/react-query";
-import { listProjects, openProjectTerminal } from "@/lib/api/projects";
+import { listProjects } from "@/lib/api/projects";
+import { emit } from "@tauri-apps/api/event";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -366,8 +367,8 @@ export function ProviderCard({
                 usingProjects.map((p) => (
                   <button
                     key={p.id}
-                    onClick={() => openProjectTerminal(p.id)}
-                    title={`${t("projects.openTerminal", { defaultValue: "在项目打开终端" })}: ${p.path}`}
+                    onClick={() => emit("ccs-open-project-settings", p.id)}
+                    title={`${t("projects.openSettings", { defaultValue: "打开项目设置" })}: ${p.path}`}
                     className="inline-flex items-center gap-0.5 rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:hover:bg-blue-900/60 transition-colors"
                   >
                     {p.name}

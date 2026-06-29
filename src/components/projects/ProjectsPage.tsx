@@ -42,6 +42,15 @@ export function ProjectsPage() {
     reload();
   }, [reload]);
 
+  // 从 localStorage 读取待打开的项目 ID（ProviderCard 标签点击跳转）
+  useEffect(() => {
+    const pendingId = localStorage.getItem("ccs-open-project-id");
+    if (pendingId) {
+      localStorage.removeItem("ccs-open-project-id");
+      setSelectedId(pendingId);
+    }
+  }, []);
+
   const selected =
     projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
 

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -217,6 +218,20 @@ function App() {
       setActiveApp(getFirstVisibleApp());
     }
   }, [visibleApps, activeApp]);
+
+  // 监听"打开项目设置"事件（来自 ProviderCard 工程标签点击）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<string>("ccs-open-project-settings", (event) => {
+      localStorage.setItem("ccs-open-project-id", event.payload);
+      setCurrentView("projects");
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
