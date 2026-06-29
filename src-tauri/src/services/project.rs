@@ -12,7 +12,7 @@ use crate::database::Database;
 use crate::database::Project;
 use crate::error::AppError;
 use crate::services::provider::{
-    build_effective_settings_with_common_config, sanitize_claude_settings_for_live,
+    build_effective_settings_with_common_config, json_deep_merge, sanitize_claude_settings_for_live,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -23,6 +23,34 @@ fn now_millis() -> i64 {
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+/// 把完整的 cc-switch 生效配置（`sanitized`：provider 的 `env` + common config 全部字段）
+/// 合并进项目已有的 settings.local.json（`existing`）。
+///
+/// - `env`：整体替换（provider 身份整体性，切换时不残留旧 `ANTHROPIC_*` key）。
+/// - 其他 top-level 字段：深度合并——对象递归合并保留 existing 已有子项，标量/数组由 sanitized
+///   覆盖（即 common config 优先）；复用 `json_deep_merge`，与全局 common config 合并语义一致。
+/// - existing 独有、sanitized 未定义的字段：原样保留（用户项目级个性化配置）。
+fn merge_full_settings_into_existing(existing: &mut Value, sanitized: &Value) {
+    let Some(existing_obj) = existing.as_object_mut() else {
+        return;
+    };
+    let Some(sanitized_obj) = sanitized.as_object() else {
+        return;
+    };
+    for (key, sanitized_value) in sanitized_obj {
+        if key == "env" {
+            existing_obj.insert(key.clone(), sanitized_value.clone());
+            continue;
+        }
+        match existing_obj.get_mut(key) {
+            Some(existing_value) => json_deep_merge(existing_value, sanitized_value),
+            None => {
+                existing_obj.insert(key.clone(), sanitized_value.clone());
+            }
+        }
+    }
 }
 
 /// 创建项目请求
@@ -229,14 +257,17 @@ impl ProjectService {
 
     /// 把项目绑定的 Claude provider 写入 `<项目根>/.claude/settings.local.json`。
     ///
-    /// **合并模式**而非覆盖：先读现有 settings.local.json（不存在则空对象），
-    /// 只覆盖/追加 cc-switch 管理的 `env` 段（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`
-    /// / `ANTHROPIC_DEFAULT_*_MODEL` 等），保留用户原有所有其他字段（hooks / enabledPlugins
-    /// / permissions 等）。写前备份到 `settings.local.json.ccs.bak`，原子写入。
+    /// **合并模式**而非整体覆盖：先读现有 settings.local.json（不存在则空对象），再把完整的
+    /// cc-switch 生效配置（provider 的 `env` + common config 的全部字段，proxy 模式下含
+    /// BASE_URL/AUTH_TOKEN 覆盖）合并进去：
+    /// - `env` 整体替换——切换 provider 时必须整套换，避免旧 provider 的 `ANTHROPIC_*` 残留；
+    /// - 其他 top-level 字段（`effortLevel` / `enabledPlugins` / `mcpServers` / `statusLine` 等）
+    ///   深度合并——保留项目已有的个性化项，同名冲突时 common config 优先；
+    /// - existing 独有、cc-switch 未管理的字段（如用户自加的 `hooks` / `enabledMcpjsonServers`）原样保留。
     ///
-    /// 选 `settings.local.json` 而非 `settings.local.json` 的原因：Claude Code 官方约定
-    /// local > project > user，本地个人配置默认 .gitignore，团队共享的 settings.local.json
-    /// 不会被 cc-switch 污染。
+    /// 写前备份到 `settings.local.json.ccs.bak`，原子写入。选 `settings.local.json` 而非
+    /// `settings.json`：Claude Code 官方约定 local > project > user，本地个人配置默认 .gitignore，
+    /// 团队共享的 `settings.json` 不会被 cc-switch 污染。
     pub fn write_claude_to_project(
         db: &Database,
         project_id: &str,
@@ -345,18 +376,10 @@ impl ProjectService {
             );
         }
 
-        // 3) 合并：existing + sanitized.ccs 子段（env 整体覆盖，其他字段不碰）
-        // cc-switch 只管理 `env` 段；其他字段（hooks / enabledPlugins / permissions / mcpServers 等）
-        // 用户可自由编辑，cc-switch 不触碰
-        let sanitized_env = sanitized
-            .as_object()
-            .and_then(|o| o.get("env"))
-            .cloned()
-            .unwrap_or(Value::Object(Map::new()));
-        {
-            let existing_obj = existing.as_object_mut().expect("existing is object");
-            existing_obj.insert("env".into(), sanitized_env);
-        }
+        // 3) 合并：完整的 sanitized（provider env + common config 全部字段，含 proxy 覆盖）
+        // 并入 existing——env 整体替换，其他字段深度合并（common config 优先），existing 独有字段保留。
+        // 详见 [`merge_full_settings_into_existing`]。
+        merge_full_settings_into_existing(&mut existing, &sanitized);
 
         // 4) 原子写
         crate::config::write_json_file(&settings_path, &existing)?;
@@ -560,8 +583,20 @@ mod tests {
         );
         let content = std::fs::read_to_string(&settings).expect("read");
         let v: serde_json::Value = serde_json::from_str(&content).expect("parse json");
-        assert_eq!(v["env"]["ANTHROPIC_BASE_URL"], "https://x.example");
-        assert_eq!(v["env"]["ANTHROPIC_AUTH_TOKEN"], "tok");
+        // proxy 开启时 BASE_URL/AUTH_TOKEN 会被改写为本地代理地址（ccs-project-<id>），
+        // 关闭时为 provider 原值；两种情况下 env 段都应被写入，故只断言 key 存在且为非空字符串。
+        assert!(
+            v["env"]["ANTHROPIC_BASE_URL"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "env.ANTHROPIC_BASE_URL 应被写入"
+        );
+        assert!(
+            v["env"]["ANTHROPIC_AUTH_TOKEN"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "env.ANTHROPIC_AUTH_TOKEN 应被写入"
+        );
 
         let reloaded = ProjectService::get(&db, &project.id)
             .expect("get")
@@ -663,6 +698,121 @@ mod tests {
         assert!(
             reloaded.last_written_at.is_some(),
             "last_written_at 应被设置"
+        );
+    }
+
+    /// common config 的非 env 字段（effortLevel / enabledPlugins / mcpServers 等）也应写入项目
+    /// settings.local.json，且：
+    /// - `env` 整体替换（切换 provider 不残留旧 key）；
+    /// - 其他字段深度合并（保留项目已有个性化项，common config 优先）；
+    /// - existing 独有字段保留。
+    #[test]
+    fn write_claude_to_project_merges_full_provider_and_common_config() {
+        let db = Database::memory().expect("memory db");
+        let dir = TempDir::new().expect("tmp");
+        let project_path = dir.path().to_string_lossy().to_string();
+
+        // provider：只有 env
+        let mut provider = Provider::with_id(
+            "glm".into(),
+            "glm".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+                    "ANTHROPIC_AUTH_TOKEN": "tok-glm",
+                    "ANTHROPIC_MODEL": "glm-5.2"
+                }
+            }),
+            None,
+        );
+        // 显式开启 common config（否则走 legacy subset 检测，env-only provider 不会命中）
+        provider.meta = Some(crate::provider::ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        db.save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider");
+
+        // common config snippet：env 之外的共享字段
+        db.set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(
+                r#"{
+                    "effortLevel": "max",
+                    "enabledPlugins": { "superpowers@claude-plugins-official": true },
+                    "mcpServers": {
+                        "shared-server": { "type": "http", "url": "https://shared.example/mcp" }
+                    }
+                }"#
+                .to_string(),
+            ),
+        )
+        .expect("set common config snippet");
+
+        // 项目已有的 settings.local.json：含用户个性化字段 + 一个将被整体替换的旧 env
+        let claude_dir = dir.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).expect("mkdir");
+        std::fs::write(
+            claude_dir.join("settings.local.json"),
+            r#"{
+                "enabledMcpjsonServers": ["fairygui-tools"],
+                "hooks": { "user-hook": { "type": "command" } },
+                "env": {
+                    "STALE_FROM_OLD_PROVIDER": "should-be-removed",
+                    "ANTHROPIC_MODEL": "old-model"
+                },
+                "mcpServers": {
+                    "project-server": { "command": "npx", "args": ["x"] }
+                }
+            }"#,
+        )
+        .expect("write existing");
+
+        let project = ProjectService::create(&db, req("SLG", &project_path)).expect("create");
+        ProjectService::set_claude_provider(&db, &project.id, Some("glm")).expect("bind");
+
+        let v: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(claude_dir.join("settings.local.json")).expect("read"),
+        )
+        .expect("parse");
+
+        // env 整体替换：旧 provider 残留 key 被清除，provider 的 model 生效（proxy 只覆盖
+        // BASE_URL/AUTH_TOKEN，不影响 MODEL，故该断言对 proxy 开关无关）
+        assert!(
+            v["env"].get("STALE_FROM_OLD_PROVIDER").is_none(),
+            "env 应整体替换，旧 provider 的残留 key 必须清除"
+        );
+        assert_eq!(
+            v["env"]["ANTHROPIC_MODEL"], "glm-5.2",
+            "provider 的 env 应整体写入"
+        );
+
+        // common config 的非 env 字段应被写入
+        assert_eq!(v["effortLevel"], "max", "common config 的 effortLevel 应写入");
+        assert_eq!(
+            v["enabledPlugins"]["superpowers@claude-plugins-official"], true,
+            "common config 的 enabledPlugins 应写入"
+        );
+
+        // existing 独有字段保留
+        assert_eq!(
+            v["enabledMcpjsonServers"],
+            serde_json::json!(["fairygui-tools"]),
+            "用户已有的 enabledMcpjsonServers 应保留"
+        );
+        assert_eq!(
+            v["hooks"]["user-hook"]["type"], "command",
+            "用户已有的 hooks 应保留"
+        );
+
+        // mcpServers 深度合并：项目的 project-server 保留 + common config 的 shared-server 补入
+        assert!(
+            v["mcpServers"].get("project-server").is_some(),
+            "深度合并应保留项目已有的 mcpServers"
+        );
+        assert!(
+            v["mcpServers"].get("shared-server").is_some(),
+            "深度合并应补入 common config 的 mcpServers"
         );
     }
 }

@@ -267,7 +267,19 @@ bash 工具每次调用后 PATH 重置。每条 cargo/pnpm 命令前需 `export 
 ### 中优先级
 - **写 settings.local.json 的 env 段可能丢失 proxy 字段**：proxy 模式下 `effective` 已含 ANTHROPIC_BASE_URL，sanitize 后再覆盖——已处理但需要回归测试
 - **软删项目没清理 settings.local.json**：项目软删后 `<项目根>/.claude/settings.local.json` 残留（不是 bug，但要文档说明）
-- **项目「重新写入」时已存在的 env 段会被整体覆盖**：合并模式只覆盖 `env` 段，不合并 env 内部 key。需确认这是预期行为（应是，因为 provider 配置必须整体替换）
+- **项目「重新写入」时 env 段整体覆盖**：`env` 仍整体替换（provider 配置整体性，避免切换时残留旧 key）；其他 top-level 字段改为深度合并（见下方「已修复」）。
+
+### 已修复（2026-06-29 续）
+- **✅ settings.local.json 只写 env、漏掉 common config 的其他字段**（原「内容不全」bug）：
+  - **现象**：项目根 `settings.local.json` 只有 `env`，`effortLevel` / `enabledPlugins` / `extraKnownMarketplaces` / `statusLine` / `includeCoAuthoredBy` / `mcpServers` 等 common config 字段全部丢失 → 在项目里跑 claude 时插件 / statusline / MCP 全没了。
+  - **根因**：`write_claude_to_project` 旧逻辑只 `existing.insert("env", sanitized_env)`，把 `build_effective_settings_with_common_config` 合并出的其他 top-level 字段全丢弃；而全局切换 `write_live_snapshot` 是写整个对象的——两者不一致。
+  - **修复**：新增 `merge_full_settings_into_existing`（`services/project.rs`），语义：
+    1. `env` 整体替换（切换 provider 不残留旧 `ANTHROPIC_*` key）；
+    2. 其他 top-level 字段深度合并进 existing（同名冲突 common config 优先，复用 `json_deep_merge`）；
+    3. existing 独有、cc-switch 未管理的字段（用户自加的 `hooks` / `enabledMcpjsonServers` 等）原样保留。
+  - **改动文件**：`services/project.rs`（合并逻辑 + 文档注释 + 新测试）、`services/provider/live.rs`（`json_deep_merge` 由私有提为 `pub(crate)`）、`services/provider/mod.rs`（re-export `json_deep_merge`）。
+  - **测试**：新增 `write_claude_to_project_merges_full_provider_and_common_config`（seed provider + common_config_claude snippet + 含旧 env/用户字段的 existing，断言非 env 字段写入 / env 整体替换清残留 / 深度合并 union / existing 独有保留）；顺手把 `write_claude_to_project_creates_settings_json_with_provider_env` 的断言改成 proxy 无关（原断言 `BASE_URL=="https://x.example"` 在 `enableLocalProxy:true` 下必挂——属环境相关**既有**问题，经 `git stash` 验证非本次回归）。
+  - ⚠️ **已落盘的项目文件不会自动重写**：需在 App 里对该项目重新绑定/重写 provider（或调 `write_project_claude_settings` 命令）才会按新语义重新生成 `settings.local.json`。
 
 ### 低优先级
 - **多 provider 路径聚合**：`/claude/project/{id}/v1/models`、`/claude/project/{id}/v1/chat/completions` 等其他路径暂未加（暂不需要）
