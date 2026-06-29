@@ -33,3 +33,6 @@ mainWindow.js
 
 # Superpowers SDD scratch
 .superpowers/
+
+# Temporary dev launcher
+dev.bat
