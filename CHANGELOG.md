@@ -5,18 +5,50 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Project Workspace（fork 新功能）
+## [Unreleased] — Project Workspace & Proxy 项目级路由
+
+cc-switch fork 拓展：项目工程目录管理 + 项目级 Claude Provider 绑定 + 本地代理项目级路由，让多项目多 provider 同时跑且经 cc-switch 代理获得统计、格式转换（OpenAI 格式 provider 可用）、故障转移。
+
+**Stats**: 9 commits on `feature/project-workspace` | 32 files changed | +2,300 insertions
 
 ### Added
 
-- **项目工程目录管理（Project Workspaces）**：新增独立「项目」标签页，可注册多个项目工程目录，每个项目绑定一个 Claude provider。激活时把 provider 配置写入 `<项目根>/.claude/settings.json`，利用 Claude Code 原生的项目级 settings.json 优先级（local > project > user），实现「在不同项目目录启动的 claude 进程各自用不同 provider」的真正多实例场景。
+- **项目工程目录管理（Project Workspaces）**：独立「项目」标签页，可注册多个项目目录，每个项目绑定一个 Claude provider。
   - 项目 CRUD + 软删除/恢复；项目元数据随数据库云同步，项目路径设备级
-  - 选定 provider 后自动 best-effort 写入项目根（路径不存在只警告，可手动「重新写入」重试）
-  - 写入前自动备份现有 `settings.json` 到 `.ccs.bak`，原子写入（temp + rename）
-  - 「在项目打开终端」（复用 open_provider_terminal，在项目目录启动 claude）+「复制启动命令」+「重新写入」
-  - SQLite schema v11→v12 加 projects 表（幂等迁移）；11 个 Tauri command；31 个后端单元测试
-  - i18n：en/zh/zh-TW/ja 四语言
-  - MVP 范围仅 Claude（Codex/Gemini/OpenCode 等的项目级支持后续迭代）
+  - 选定 provider 后 best-effort 写入项目根（路径不存在只警告，可手动「重新写入」重试）
+  - 「在项目打开终端」（统一用 `launch_terminal_running` 强制 `cd "<项目根>"`，终端 cwd 始终是项目目录）+「自定义命令」（如 `npm run dev`，per-project localStorage 持久化）+「复制启动命令」+「重新写入」
+- **本地代理项目级路由（方案 A）**：解决 2 个致命问题——
+  1. 项目级请求直连 provider → cc-switch 收不到统计
+  2. OpenAI 格式 provider 在 Claude Code 项目级模式下不生效（直连不通）
+  - proxy 加路由 `/claude/project/{project_id}/v1/messages`，按项目 id 路由各自的 provider
+  - `ProviderRouter::select_providers_for_project` 从 projects 表读项目绑定的 provider（不走全局 current/failover）
+  - 写项目根时覆盖 `ANTHROPIC_BASE_URL` 指向 `proxy/claude/project/<id>`，`ANTHROPIC_AUTH_TOKEN` 用 `ccs-project-<id>` 占位
+  - 启用本地代理时自动走代理；未启用仍直连（向后兼容）
+- **项目级 settings 写入（合并模式）**：写到 `<项目根>/.claude/settings.local.json`（Claude Code 官方约定，local > project > user，gitignore 默认不污染团队 `settings.json`）；读现有 → 合并 `env` 段（provider 配置）→ 保留 hooks / plugins / permissions 等其他字段；写前备份 `settings.local.json.ccs.bak`
+- **用量明细「工程」列**：`RequestLogTable` 在 provider 列前加「工程」列（`log.projectName`）；schema v13 `proxy_request_logs` 加 `project_id` 列 + 索引；`spawn_log_usage` 等归因链透传
+- **Provider 卡片工程标签**：首页 provider 卡片显示使用此 provider 的项目名 chip（蓝色），点击 → 跳项目设置页并自动选中（通过 Tauri event `ccs-open-project-settings` 解耦）
+- **i18n**：en/zh/zh-TW/ja 四语言（projects section + usage.project）
+
+### Changed
+
+- **项目级终端 cwd 修复**：`open_project_terminal` 统一用 `launch_terminal_running`（cd + 命令），确保终端启动目录是项目根（之前 `open_provider_terminal` 的 cwd 机制不可靠）
+- **自定义命令持久化**：前端 localStorage `ccs-cmd-<projectId>`，切项目自动加载该项目的命令
+- **重写提示 toast**：i18n `writeSuccess` 文案从 `.claude/settings.json` 改为 `.claude/settings.local.json`
+- **DB schema 升级**：v11 → v12（projects 表）→ v13（proxy_request_logs.project_id 列 + 索引）
+- **device-level settings**：保持向后兼容，`current_project_id` 字段在 settings.rs 中预留
+
+### Fixed
+
+- **`add_column_if_missing` 幂等**：migrate_v12_to_v13 用幂等 helper（避免 create_tables 与 migrate 重复 ALTER 列导致 `duplicate column name`）
+- **终端 cwd 不对**（之前误用 open_provider_terminal，导致终端启动在 `C:\Users\xxx`）：统一改用 `launch_terminal_running(cd "<项目根>" && claude)`
+- **provider 卡片点击行为修正**：chip 点击改为打开项目设置（之前是打开终端，用户反馈不对）
+
+### Tech debt / 已知限制
+
+- **M1 数据层**：DAO 接受 `now_millis: i64` 参数而非内部调 `chrono`（可测性 + 测试能断言精确时间戳），service 层调用时传 `chrono::Utc::now().timestamp_millis()`
+- **B1 usage 归因覆盖**：非流式（`spawn_log_usage`）+ Claude 转换流式第一处（handlers 408 穿透）已归因；其他 5 处流式/转换路径闭包穿透复杂，传 `None`（流式请求工程列可能为空）
+- **MVP 仅 Claude**：Codex/Gemini/OpenCode/OpenClaw/Hermes 的项目级支持未实现
+- **macOS 跨编译**：本机（Windows）无法交叉编译 macOS `.dmg`；需 GitHub Actions（macos-14 runner）或 Mac 机器
 
 ## [3.16.4] - 2026-06-27
 
