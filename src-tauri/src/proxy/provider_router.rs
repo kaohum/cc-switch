@@ -108,7 +108,30 @@ impl ProviderRouter {
         Ok(result)
     }
 
-    /// 请求执行前获取熔断器“放行许可”
+    /// 按**项目工程目录**选择 provider（项目级路由，方案 A）。
+    ///
+    /// 从 projects 表读项目绑定的 `claude_provider_id`，返回该 provider。
+    /// 不走全局 current provider / failover 队列——每个项目各自独立，
+    /// 实现多项目多 provider 同时经 proxy 路由。
+    pub async fn select_providers_for_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Provider>, AppError> {
+        let project = self
+            .db
+            .get_project(project_id)?
+            .ok_or_else(|| AppError::Message(format!("项目 {project_id} 不存在")))?;
+        let provider_id = project
+            .claude_provider_id
+            .ok_or(AppError::NoProvidersConfigured)?;
+        let provider = self
+            .db
+            .get_provider_by_id(&provider_id, AppType::Claude.as_str())?
+            .ok_or(AppError::NoProvidersConfigured)?;
+        Ok(vec![provider])
+    }
+
+    /// 请求执行前获取熔断器"放行许可"
     ///
     /// - Closed：直接放行
     /// - Open：超时到达后切到 HalfOpen 并放行一次探测
@@ -337,6 +360,59 @@ mod tests {
         assert!(breaker.allow_request().await.allowed);
     }
 
+    fn make_project(id: &str, provider_id: Option<&str>) -> crate::database::Project {
+        crate::database::Project {
+            id: id.into(),
+            name: id.into(),
+            path: "/tmp/test".into(),
+            description: None,
+            claude_provider_id: provider_id.map(str::to_string),
+            created_at: 0,
+            updated_at: 0,
+            last_written_at: None,
+            deleted_at: None,
+            sort_index: None,
+            icon: None,
+            icon_color: None,
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_select_providers_for_project_returns_bound_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = Provider::with_id("p1".into(), "P1".into(), json!({}), None);
+        db.save_provider("claude", &provider).unwrap();
+        db.save_project(&make_project("proj1", Some("p1"))).unwrap();
+
+        let router = ProviderRouter::new(db);
+        let providers = router.select_providers_for_project("proj1").await.unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "p1");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_select_providers_for_project_missing_project_errors() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let router = ProviderRouter::new(db);
+        let err = router.select_providers_for_project("nope").await.unwrap_err();
+        assert!(matches!(err, AppError::Message(_)));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_select_providers_for_project_no_provider_bound_errors() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        db.save_project(&make_project("proj1", None)).unwrap();
+        let router = ProviderRouter::new(db);
+        let err = router.select_providers_for_project("proj1").await.unwrap_err();
+        assert!(matches!(err, AppError::NoProvidersConfigured));
+    }
+
     #[tokio::test]
     #[serial]
     async fn test_failover_disabled_uses_current_provider() {
@@ -411,7 +487,7 @@ mod tests {
         db.save_provider("claude", &provider_b).unwrap();
         db.set_current_provider("claude", "a").unwrap();
 
-        // 只把 b 加入故障转移队列（模拟“当前供应商不在队列里”的常见配置）
+        // 只把 b 加入故障转移队列（模拟"当前供应商不在队列里"的常见配置）
         db.add_to_failover_queue("claude", "b").unwrap();
 
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
