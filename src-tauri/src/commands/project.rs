@@ -107,13 +107,18 @@ pub async fn open_project_terminal(
         cmd
     );
 
-    // Windows: start "" /D "<path>" cmd /K "<cmd>" — /D 设新窗口起始目录
+    // Windows: 用 cmd /C "完整命令行" 让 cmd 自己解析（避免 args 数组的转义问题）
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
-        let result = Command::new("cmd")
-            .args(["/C", "start", "\"\"", "/D", project_path, "cmd", "/K", &cmd])
-            .spawn();
+        // start 第一个参数是窗口标题（必须），/D 是起始目录，cmd /K 保持窗口
+        // 用嵌入引号的单字符串让 cmd 解析
+        let full_cmd = format!(
+            "start \"CC-Switch\" /D \"{}\" cmd /K \"{}\"",
+            project_path, cmd
+        );
+        log::info!("[open_project_terminal] full_cmd: {full_cmd}");
+        let result = Command::new("cmd").args(["/C", &full_cmd]).spawn();
         match result {
             Ok(_) => {
                 log::info!("[open_project_terminal] Windows cmd 启动成功，cwd={project_path}");
