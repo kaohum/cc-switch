@@ -59,9 +59,12 @@ export async function writeProjectClaudeSettings(
   return invoke<string>("write_project_claude_settings", { projectId });
 }
 
-/** 在项目目录打开终端并启动 claude（用项目绑定的 provider） */
-export async function openProjectTerminal(projectId: string): Promise<boolean> {
-  return invoke<boolean>("open_project_terminal", { projectId });
+/** 在项目目录打开终端并启动 claude（用项目绑定的 provider），或跑自定义命令 */
+export async function openProjectTerminal(
+  projectId: string,
+  customCommand?: string,
+): Promise<boolean> {
+  return invoke<boolean>("open_project_terminal", { projectId, customCommand });
 }
 
 /** 返回在项目目录启动 claude 的命令字符串（cd "<path>" && claude） */

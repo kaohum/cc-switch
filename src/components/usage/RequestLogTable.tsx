@@ -213,7 +213,8 @@ export function RequestLogTable({
                           )}
                         </TableCell>
                         <TableCell className="text-center text-xs">
-                          {log.projectName || t("usage.noProject", { defaultValue: "—" })}
+                          {log.projectName ||
+                            t("usage.noProject", { defaultValue: "—" })}
                         </TableCell>
                         <TableCell className="text-center">
                           {log.providerName || t("usage.unknownProvider")}

@@ -90,10 +90,24 @@ pub fn write_project_claude_settings(
 pub async fn open_project_terminal(
     state: State<'_, AppState>,
     #[allow(non_snake_case)] projectId: String,
+    #[allow(non_snake_case)] customCommand: Option<String>,
 ) -> Result<bool, String> {
     let project = ProjectService::get(&state.db, &projectId)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("项目 {projectId} 不存在"))?;
+
+    // 自定义命令：在项目目录跑用户指定的命令（如 npm run dev / 其他 CLI）
+    if let Some(cmd) = customCommand
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+    {
+        let command_line = format!("cd \"{}\" && {}", project.path, cmd);
+        crate::commands::launch_terminal_running(&command_line, "project-command")
+            .map_err(|e| format!("启动终端失败: {e}"))?;
+        return Ok(true);
+    }
+
+    // 默认：启动 claude（用项目绑定的 provider）
     let provider_id = project
         .claude_provider_id
         .clone()

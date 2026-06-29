@@ -12,6 +12,7 @@ import {
 import { useProjects } from "@/hooks/useProjects";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Input } from "@/components/ui/input";
 import { ProviderSelectForProject } from "./ProviderSelectForProject";
 import { ProjectFormDialog, type ProjectFormData } from "./ProjectFormDialog";
 import type { Project } from "@/types/project";
@@ -35,6 +36,7 @@ export function ProjectsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [customCommand, setCustomCommand] = useState("");
 
   useEffect(() => {
     reload();
@@ -175,11 +177,21 @@ export function ProjectsPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 border-t pt-4">
+            <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+              <Input
+                placeholder={t("projects.customCommandPlaceholder", {
+                  defaultValue: "自定义命令（留空=claude）",
+                })}
+                value={customCommand}
+                onChange={(e) => setCustomCommand(e.target.value)}
+                className="h-8 max-w-xs font-mono text-xs"
+              />
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => openTerminal(selected.id)}
+                onClick={() =>
+                  openTerminal(selected.id, customCommand.trim() || undefined)
+                }
               >
                 <Terminal className="h-4 w-4" /> {t("projects.openTerminal")}
               </Button>

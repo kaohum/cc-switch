@@ -129,9 +129,9 @@ export function useProjects() {
   );
 
   const openTerminal = useCallback(
-    async (id: string): Promise<boolean> => {
+    async (id: string, customCommand?: string): Promise<boolean> => {
       try {
-        await projectsApi.openProjectTerminal(id);
+        await projectsApi.openProjectTerminal(id, customCommand);
         return true;
       } catch (error) {
         toast.error(String(error));

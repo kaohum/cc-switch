@@ -26,6 +26,8 @@ import {
 } from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
+import { useQuery } from "@tanstack/react-query";
+import { listProjects, openProjectTerminal } from "@/lib/api/projects";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -171,6 +173,16 @@ export function ProviderCard({
   const isAdditiveMode = appId === "opencode" && !isAnyOmo;
 
   const { data: health } = useProviderHealth(provider.id, appId);
+
+  // 查询使用此 provider 的项目工程（仅 claude app 有项目绑定）
+  const { data: allProjects } = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => listProjects(),
+    enabled: appId === "claude",
+  });
+  const usingProjects = (allProjects ?? []).filter(
+    (p) => p.claudeProviderId === provider.id,
+  );
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -349,6 +361,18 @@ export function ProviderCard({
               <h3 className="text-base font-semibold leading-none">
                 {provider.name}
               </h3>
+
+              {usingProjects.length > 0 &&
+                usingProjects.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => openProjectTerminal(p.id)}
+                    title={`${t("projects.openTerminal", { defaultValue: "在项目打开终端" })}: ${p.path}`}
+                    className="inline-flex items-center gap-0.5 rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:hover:bg-blue-900/60 transition-colors"
+                  >
+                    {p.name}
+                  </button>
+                ))}
 
               {isOmo && (
                 <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
