@@ -4,7 +4,7 @@
 //! service 负责校验和编排。方法接受 `&Database`（不依赖 Tauri state），
 //! 便于用 `Database::memory()` 做单元测试。
 //!
-//! `set_claude_provider` 绑定后 best-effort 写入项目根 `.claude/settings.json`
+//! `set_claude_provider` 绑定后 best-effort 写入项目根 `.claude/settings.local.json`
 //! （路径不存在时只 warn，可用 `write_project_claude_settings` 手动重试）。
 
 use crate::app_config::AppType;
@@ -108,7 +108,7 @@ impl ProjectService {
         if project.claude_provider_id.is_some() {
             if let Err(e) = Self::write_claude_to_project(db, &project.id) {
                 log::warn!(
-                    "项目 {} 创建后写入 .claude/settings.json 失败（可稍后手动重试）: {e}",
+                    "项目 {} 创建后写入 .claude/settings.local.json 失败（可稍后手动重试）: {e}",
                     project.id
                 );
             }
@@ -177,7 +177,7 @@ impl ProjectService {
     }
 
     /// 设置项目绑定的 Claude provider。
-    /// 校验 provider 存在；绑定后 best-effort 写入项目根 .claude/settings.json。
+    /// 校验 provider 存在；绑定后 best-effort 写入项目根 .claude/settings.local.json。
     pub fn set_claude_provider(
         db: &Database,
         id: &str,
@@ -204,12 +204,12 @@ impl ProjectService {
             db.update_project_provider(id, None, now_millis())?;
         }
 
-        // best-effort 写入项目根 .claude/settings.json（路径不存在时只 warn，
+        // best-effort 写入项目根 .claude/settings.local.json（路径不存在时只 warn，
         // 不阻塞绑定；用户可稍后用 write_project_claude_settings 手动重试）
         if normalized.is_some() {
             if let Err(e) = Self::write_claude_to_project(db, id) {
                 log::warn!(
-                    "项目 {id} 绑定 provider 后写入 .claude/settings.json 失败（可稍后手动重试）: {e}"
+                    "项目 {id} 绑定 provider 后写入 .claude/settings.local.json 失败（可稍后手动重试）: {e}"
                 );
             }
         }
@@ -227,11 +227,16 @@ impl ProjectService {
         })
     }
 
-    /// 把项目绑定的 Claude provider 写入 `<项目根>/.claude/settings.json`。
+    /// 把项目绑定的 Claude provider 写入 `<项目根>/.claude/settings.local.json`。
     ///
-    /// 复用 live.rs 的 effective settings 构造（含 common config merge）+ sanitize
-    /// （去掉 api_format 等内部字段）；写前备份现有 settings.json 到 `.ccs.bak`，
-    /// 原子写入（temp + rename）。路径不存在或未绑定 provider 时返回 Err。
+    /// **合并模式**而非覆盖：先读现有 settings.local.json（不存在则空对象），
+    /// 只覆盖/追加 cc-switch 管理的 `env` 段（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`
+    /// / `ANTHROPIC_DEFAULT_*_MODEL` 等），保留用户原有所有其他字段（hooks / enabledPlugins
+    /// / permissions 等）。写前备份到 `settings.local.json.ccs.bak`，原子写入。
+    ///
+    /// 选 `settings.local.json` 而非 `settings.local.json` 的原因：Claude Code 官方约定
+    /// local > project > user，本地个人配置默认 .gitignore，团队共享的 settings.local.json
+    /// 不会被 cc-switch 污染。
     pub fn write_claude_to_project(
         db: &Database,
         project_id: &str,
@@ -264,22 +269,41 @@ impl ProjectService {
         let claude_dir = project_root.join(".claude");
         std::fs::create_dir_all(&claude_dir).map_err(|e| AppError::io(&claude_dir, e))?;
 
-        let settings_path = claude_dir.join("settings.json");
-        // 写前备份现有 settings.json（用户可能手动编辑过）
+        let settings_path = claude_dir.join("settings.local.json");
+
+        // 1) 读现有 settings.local.json（保留用户其他配置）；不存在则空对象
+        let mut existing: Value = if settings_path.exists() {
+            let raw = std::fs::read_to_string(&settings_path)
+                .map_err(|e| AppError::io(&settings_path, e))?;
+            serde_json::from_str(&raw).unwrap_or(Value::Object(Map::new()))
+        } else {
+            Value::Object(Map::new())
+        };
+        if !existing.is_object() {
+            // 存在但不是对象（如用户写成数组）→ 备份后当作空对象，避免覆盖用户数据
+            log::warn!(
+                "{} 顶层不是 JSON 对象，按空对象合并（已备份为 .bak）",
+                settings_path.display()
+            );
+            let backup = settings_path.with_extension("json.ccs.bak");
+            let _ = std::fs::copy(&settings_path, &backup);
+            existing = Value::Object(Map::new());
+        }
+
+        // 写前备份原文件
         if settings_path.exists() {
-            let backup = claude_dir.join("settings.json.ccs.bak");
+            let backup = claude_dir.join("settings.local.json.ccs.bak");
             if let Err(e) = std::fs::copy(&settings_path, &backup) {
                 log::warn!("备份 {} 失败: {e}", settings_path.display());
             }
         }
 
-        // 构造 effective settings + sanitize 去内部字段
+        // 2) 构造 cc-switch 管理的 effective settings + sanitize
         let effective =
             build_effective_settings_with_common_config(db, &AppType::Claude, &provider)?;
         let mut sanitized = sanitize_claude_settings_for_live(&effective);
 
-        // proxy 模式（方案 A）：覆盖 base_url/token 指向 cc-switch proxy + 项目路径，
-        // 让请求经 proxy 路由（获得统计 + 格式转换 + 故障转移）。未启用 proxy 时直连（现状）。
+        // proxy 模式（方案 A）：覆盖 base_url/token 指向 cc-switch proxy + 项目路径
         if crate::settings::get_settings().enable_local_proxy {
             let listen = futures::executor::block_on(db.get_global_proxy_config()).ok();
             let host = listen
@@ -293,6 +317,8 @@ impl ProjectService {
             };
             let project_url = format!("http://{connect_host}:{port}/claude/project/{}", project.id);
             let token = format!("ccs-project-{}", &project.id);
+            // 收集 effective 的 env 段（去掉 .ccs 项目特定覆盖，让 sanitized env 保持
+            // provider 原始字段；proxy URL/token 在合并阶段最后单独写）
             let env_obj = sanitized
                 .as_object_mut()
                 .and_then(|o| o.get_mut("env"))
@@ -313,17 +339,31 @@ impl ProjectService {
                 obj.insert("env".into(), Value::Object(env));
             }
             log::info!(
-                "项目 '{}' proxy 模式 settings.json → {}",
+                "项目 '{}' proxy 模式 settings.local.json → {}",
                 project.name,
                 project_url
             );
         }
 
-        crate::config::write_json_file(&settings_path, &sanitized)?;
+        // 3) 合并：existing + sanitized.ccs 子段（env 整体覆盖，其他字段不碰）
+        // cc-switch 只管理 `env` 段；其他字段（hooks / enabledPlugins / permissions / mcpServers 等）
+        // 用户可自由编辑，cc-switch 不触碰
+        let sanitized_env = sanitized
+            .as_object()
+            .and_then(|o| o.get("env"))
+            .cloned()
+            .unwrap_or(Value::Object(Map::new()));
+        {
+            let existing_obj = existing.as_object_mut().expect("existing is object");
+            existing_obj.insert("env".into(), sanitized_env);
+        }
+
+        // 4) 原子写
+        crate::config::write_json_file(&settings_path, &existing)?;
 
         db.update_project_last_written_at(project_id, now_millis())?;
         log::info!(
-            "项目 '{}' 的 Claude settings 已写入 {}",
+            "项目 '{}' 的 Claude settings 已合并写入 {}",
             project.name,
             settings_path.display()
         );
@@ -513,8 +553,11 @@ mod tests {
         // set_claude_provider 绑定后 best-effort 写入（路径存在 → 成功）
         ProjectService::set_claude_provider(&db, &project.id, Some("packy")).expect("bind");
 
-        let settings = dir.path().join(".claude").join("settings.json");
-        assert!(settings.exists(), "绑定 provider 后应写入 settings.json");
+        let settings = dir.path().join(".claude").join("settings.local.json");
+        assert!(
+            settings.exists(),
+            "绑定 provider 后应写入 settings.local.json"
+        );
         let content = std::fs::read_to_string(&settings).expect("read");
         let v: serde_json::Value = serde_json::from_str(&content).expect("parse json");
         assert_eq!(v["env"]["ANTHROPIC_BASE_URL"], "https://x.example");
@@ -532,17 +575,31 @@ mod tests {
         let dir = TempDir::new().expect("tmp");
         let claude_dir = dir.path().join(".claude");
         std::fs::create_dir_all(&claude_dir).expect("mkdir");
-        std::fs::write(claude_dir.join("settings.json"), b"{\"old\": true}").expect("write old");
+        std::fs::write(claude_dir.join("settings.local.json"), b"{\"old\": true}")
+            .expect("write old");
         seed_provider_with_env(&db, "packy", "https://y");
 
         let project_path = dir.path().to_string_lossy().to_string();
         let project = ProjectService::create(&db, req("A", &project_path)).expect("create");
         ProjectService::set_claude_provider(&db, &project.id, Some("packy")).expect("bind");
 
-        let backup = claude_dir.join("settings.json.ccs.bak");
-        assert!(backup.exists(), "应备份旧 settings.json 到 .ccs.bak");
+        let backup = claude_dir.join("settings.local.json.ccs.bak");
+        assert!(backup.exists(), "应备份旧 settings.local.json 到 .ccs.bak");
         let backup_content = std::fs::read_to_string(&backup).expect("read backup");
         assert!(backup_content.contains("old"), "备份应保留旧内容");
+
+        // 合并模式：settings.local.json 应保留原有 "old" 字段，同时注入 env
+        let merged =
+            std::fs::read_to_string(claude_dir.join("settings.local.json")).expect("read merged");
+        let v: serde_json::Value = serde_json::from_str(&merged).expect("parse merged");
+        assert_eq!(
+            v["old"], true,
+            "合并模式应保留原有非 env 字段（hooks/plugins/permissions 等）"
+        );
+        assert!(
+            v["env"]["ANTHROPIC_BASE_URL"].is_string(),
+            "env 段应被注入（provider 配置）"
+        );
     }
 
     #[test]
@@ -595,10 +652,10 @@ mod tests {
         )
         .expect("create");
 
-        let settings = dir.path().join(".claude").join("settings.json");
+        let settings = dir.path().join(".claude").join("settings.local.json");
         assert!(
             settings.exists(),
-            "create 带 provider 应自动写入项目根 settings.json"
+            "create 带 provider 应自动写入项目根 settings.local.json"
         );
         let reloaded = ProjectService::get(&db, &project.id)
             .expect("get")
