@@ -152,6 +152,9 @@ pub struct RequestLogDetail {
     /// 写入时实际用于计价的模型名。None = v11 前的历史行，"" = 未计价的错误行。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_model: Option<String>,
+    /// 所属项目工程目录名（项目级路由归因；None = 全局路由或未归因）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
 }
 
 /// 把 25 列的查询结果映射为 `RequestLogDetail`。
@@ -194,6 +197,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         created_at: row.get(22)?,
         data_source: row.get(23)?,
         pricing_model: row.get(24)?,
+        project_name: row.get(25)?,
     })
 }
 
@@ -1526,7 +1530,8 @@ impl Database {
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
+                    (SELECT name FROM projects WHERE id = l.project_id) as project_name
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -1569,7 +1574,8 @@ impl Database {
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                     is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source, l.pricing_model
+                    status_code, error_message, created_at, l.data_source, l.pricing_model,
+                    (SELECT name FROM projects WHERE id = l.project_id) as project_name
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
