@@ -15,6 +15,7 @@ use crate::services::provider::{
     build_effective_settings_with_common_config, sanitize_claude_settings_for_live,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 fn now_millis() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -275,7 +276,42 @@ impl ProjectService {
         // 构造 effective settings + sanitize 去内部字段
         let effective =
             build_effective_settings_with_common_config(db, &AppType::Claude, &provider)?;
-        let sanitized = sanitize_claude_settings_for_live(&effective);
+        let mut sanitized = sanitize_claude_settings_for_live(&effective);
+
+        // proxy 模式（方案 A）：覆盖 base_url/token 指向 cc-switch proxy + 项目路径，
+        // 让请求经 proxy 路由（获得统计 + 格式转换 + 故障转移）。未启用 proxy 时直连（现状）。
+        if crate::settings::get_settings().enable_local_proxy {
+            let listen = futures::executor::block_on(db.get_global_proxy_config()).ok();
+            let host = listen
+                .as_ref()
+                .map(|c| c.listen_address.as_str())
+                .unwrap_or("127.0.0.1");
+            let port = listen.as_ref().map(|c| c.listen_port).unwrap_or(15721);
+            let connect_host = match host {
+                "0.0.0.0" => "127.0.0.1",
+                other => other,
+            };
+            let project_url = format!("http://{connect_host}:{port}/claude/project/{}", project.id);
+            let token = format!("ccs-project-{}", &project.id);
+            let env_obj = sanitized
+                .as_object_mut()
+                .and_then(|o| o.get_mut("env"))
+                .and_then(|v| v.as_object_mut());
+            if let Some(env) = env_obj {
+                env.insert("ANTHROPIC_BASE_URL".into(), Value::String(project_url.clone()));
+                env.insert("ANTHROPIC_AUTH_TOKEN".into(), Value::String(token));
+            } else if let Some(obj) = sanitized.as_object_mut() {
+                let mut env = Map::new();
+                env.insert("ANTHROPIC_BASE_URL".into(), Value::String(project_url.clone()));
+                env.insert("ANTHROPIC_AUTH_TOKEN".into(), Value::String(token));
+                obj.insert("env".into(), Value::Object(env));
+            }
+            log::info!(
+                "项目 '{}' proxy 模式 settings.json → {}",
+                project.name,
+                project_url
+            );
+        }
 
         crate::config::write_json_file(&settings_path, &sanitized)?;
 
