@@ -1360,11 +1360,8 @@ impl Database {
 
     /// v12 -> v13 迁移：proxy_request_logs 加 project_id 列（项目级路由 usage 归因）
     fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
-        conn.execute(
-            "ALTER TABLE proxy_request_logs ADD COLUMN project_id TEXT",
-            [],
-        )
-        .map_err(|e| AppError::Database(format!("v12 -> v13 加 project_id 列失败: {e}")))?;
+        // 用 add_column_if_missing 幂等加列（create_tables 已可能先加过）
+        Self::add_column_if_missing(conn, "proxy_request_logs", "project_id", "TEXT")?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_request_logs_project ON proxy_request_logs(project_id)",
             [],
