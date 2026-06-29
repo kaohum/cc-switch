@@ -112,7 +112,7 @@ pub async fn handle_messages(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
+    handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None, None).await
 }
 
 pub async fn handle_claude_desktop_messages(
@@ -127,6 +127,7 @@ pub async fn handle_claude_desktop_messages(
         "Claude Desktop",
         "claude-desktop",
         Some("/claude-desktop"),
+        None,
     )
     .await
 }
@@ -154,6 +155,7 @@ async fn handle_messages_for_app(
     tag: &'static str,
     app_type_str: &'static str,
     strip_prefix: Option<&'static str>,
+    project_id: Option<&str>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, body) = request.into_parts();
     let method = parts.method.clone();
@@ -169,7 +171,7 @@ async fn handle_messages_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str, project_id).await?;
 
     let raw_endpoint = uri
         .path_and_query()
@@ -636,7 +638,7 @@ pub async fn handle_chat_completions(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex", None).await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -702,7 +704,7 @@ pub async fn handle_responses(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex", None).await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
@@ -781,7 +783,7 @@ pub async fn handle_responses_compact(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex", None).await?;
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
@@ -1351,7 +1353,7 @@ pub async fn handle_gemini(
     };
 
     // Gemini 的模型名称在 URI 中
-    let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
+    let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini", None)
         .await?
         .with_model_from_uri(&uri);
 

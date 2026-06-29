@@ -92,6 +92,7 @@ impl RequestContext {
         app_type: AppType,
         tag: &'static str,
         app_type_str: &'static str,
+        project_id: Option<&str>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
 
@@ -131,17 +132,21 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        //
+        // 项目级路由（方案 A）：带 project_id 时走项目的 provider，不走全局 current/failover
+        let providers = if let Some(pid) = project_id {
+            state
+                .provider_router
+                .select_providers_for_project(pid)
+                .await
+        } else {
+            state.provider_router.select_providers(app_type_str).await
+        }
+        .map_err(|e| match e {
+            crate::error::AppError::AllProvidersCircuitOpen => ProxyError::AllProvidersCircuitOpen,
+            crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
+            _ => ProxyError::DatabaseError(e.to_string()),
+        })?;
 
         let provider = providers
             .first()
