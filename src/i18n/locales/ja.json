@@ -1837,7 +1837,7 @@
     "deleteSuccess": "プロジェクトを削除しました",
     "restoreSuccess": "プロジェクトを復元しました",
     "providerSetSuccess": "プロバイダーを設定しました",
-    "writeSuccess": "プロジェクトの .claude/settings.json に書き込みました",
+    "writeSuccess": "プロジェクトの .claude/settings.local.json に書き込みました",
     "copyCommandSuccess": "起動コマンドをコピーしました"
   },
   "prompts": {

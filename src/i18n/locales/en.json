@@ -1837,7 +1837,7 @@
     "deleteSuccess": "Project deleted",
     "restoreSuccess": "Project restored",
     "providerSetSuccess": "Provider bound",
-    "writeSuccess": "Written to project .claude/settings.json",
+    "writeSuccess": "Written to project .claude/settings.local.json",
     "copyCommandSuccess": "Launch command copied"
   },
   "prompts": {

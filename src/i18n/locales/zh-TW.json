@@ -1809,7 +1809,7 @@
     "deleteSuccess": "專案已刪除",
     "restoreSuccess": "專案已還原",
     "providerSetSuccess": "供應商已綁定",
-    "writeSuccess": "已寫入專案根 .claude/settings.json",
+    "writeSuccess": "已寫入專案根 .claude/settings.local.json",
     "copyCommandSuccess": "啟動命令已複製"
   },
   "prompts": {

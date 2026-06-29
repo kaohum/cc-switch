@@ -1837,7 +1837,7 @@
     "deleteSuccess": "项目已删除",
     "restoreSuccess": "项目已恢复",
     "providerSetSuccess": "供应商已绑定",
-    "writeSuccess": "已写入项目根 .claude/settings.json",
+    "writeSuccess": "已写入项目根 .claude/settings.local.json",
     "copyCommandSuccess": "启动命令已复制"
   },
   "prompts": {

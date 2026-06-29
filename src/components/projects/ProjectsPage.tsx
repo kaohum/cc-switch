@@ -54,6 +54,13 @@ export function ProjectsPage() {
   const selected =
     projects.find((p) => p.id === selectedId) ?? projects[0] ?? null;
 
+  // 自定义命令持久化（per-project，设备级 localStorage）
+  useEffect(() => {
+    if (selected) {
+      setCustomCommand(localStorage.getItem(`ccs-cmd-${selected.id}`) ?? "");
+    }
+  }, [selected?.id]);
+
   const handleCreate = () => {
     setEditing(null);
     setFormOpen(true);
@@ -192,7 +199,15 @@ export function ProjectsPage() {
                   defaultValue: "自定义命令（留空=claude）",
                 })}
                 value={customCommand}
-                onChange={(e) => setCustomCommand(e.target.value)}
+                onChange={(e) => {
+                  setCustomCommand(e.target.value);
+                  if (selected) {
+                    localStorage.setItem(
+                      `ccs-cmd-${selected.id}`,
+                      e.target.value,
+                    );
+                  }
+                }}
                 className="h-8 max-w-xs font-mono text-xs"
               />
               <Button

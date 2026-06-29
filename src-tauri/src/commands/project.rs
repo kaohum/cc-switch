@@ -8,7 +8,6 @@
 
 use tauri::State;
 
-use crate::app_config::AppType;
 use crate::database::Project;
 use crate::services::{CreateProjectRequest, ProjectService, UpdateProjectRequest};
 use crate::store::AppState;
@@ -80,12 +79,10 @@ pub fn write_project_claude_settings(
     Ok(path.to_string_lossy().to_string())
 }
 
-/// 在项目目录打开终端并启动 claude（用项目绑定的 Claude provider）。
+/// 在项目目录打开终端并执行命令（默认 `claude`，或用户自定义命令）。
 ///
-/// 复用 `open_provider_terminal` 的跨平台终端启动逻辑：cwd = 项目根，
-/// 注入项目绑定 provider 的配置。这直接实现「每个项目 CLI 用不同 provider」——
-/// 不同项目目录启动的 claude 进程天然读各自的 provider 配置。
-/// （若只想打开空终端手动操作，用 `copy_project_launch_command` 复制启动命令。）
+/// 统一用 `launch_terminal_running`（cd + 命令）确保终端 cwd 是项目目录。
+/// claude 会自动读项目根 `.claude/settings.local.json`（含 provider 配置）。
 #[tauri::command]
 pub async fn open_project_terminal(
     state: State<'_, AppState>,
@@ -96,30 +93,16 @@ pub async fn open_project_terminal(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("项目 {projectId} 不存在"))?;
 
-    // 自定义命令：在项目目录跑用户指定的命令（如 npm run dev / 其他 CLI）
-    if let Some(cmd) = customCommand
+    let cmd = customCommand
         .map(|c| c.trim().to_string())
         .filter(|c| !c.is_empty())
-    {
-        let command_line = format!("cd \"{}\" && {}", project.path, cmd);
-        crate::commands::launch_terminal_running(&command_line, "project-command")
-            .map_err(|e| format!("启动终端失败: {e}"))?;
-        return Ok(true);
-    }
+        .unwrap_or_else(|| "claude".to_string());
 
-    // 默认：启动 claude（用项目绑定的 provider）
-    let provider_id = project
-        .claude_provider_id
-        .clone()
-        .ok_or_else(|| "项目未绑定 Claude provider，无法启动".to_string())?;
-
-    crate::commands::open_provider_terminal(
-        state,
-        AppType::Claude.as_str().to_string(),
-        provider_id,
-        Some(project.path.clone()),
-    )
-    .await
+    // cd 到项目目录 + 执行命令（launch_terminal_running 确保终端在该目录启动）
+    let command_line = format!("cd \"{}\" && {}", project.path, cmd);
+    crate::commands::launch_terminal_running(&command_line, "project")
+        .map_err(|e| format!("启动终端失败: {e}"))?;
+    Ok(true)
 }
 
 /// 返回在项目目录启动 claude 的命令字符串（供前端复制到剪贴板）。
