@@ -325,6 +325,16 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 项目级路由归因：proxy_request_logs 加 project_id 列（方案 A，usage 按工程统计）
+        let _ = conn.execute(
+            "ALTER TABLE proxy_request_logs ADD COLUMN project_id TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_project ON proxy_request_logs(project_id)",
+            [],
+        );
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -478,6 +488,11 @@ impl Database {
                         log::info!("迁移数据库从 v11 到 v12（添加项目工程目录管理 projects 表）");
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（proxy_request_logs 加 project_id 列，usage 按工程归因）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1340,6 +1355,25 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 idx_projects_sort 失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：proxy_request_logs 加 project_id 列（项目级路由 usage 归因）
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "ALTER TABLE proxy_request_logs ADD COLUMN project_id TEXT",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v12 -> v13 加 project_id 列失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_project ON proxy_request_logs(project_id)",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "v12 -> v13 创建 idx_request_logs_project 失败: {e}"
+            ))
+        })?;
         Ok(())
     }
 

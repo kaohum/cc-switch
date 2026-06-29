@@ -398,7 +398,10 @@ mod tests {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
         let router = ProviderRouter::new(db);
-        let err = router.select_providers_for_project("nope").await.unwrap_err();
+        let err = router
+            .select_providers_for_project("nope")
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::Message(_)));
     }
 
@@ -409,7 +412,10 @@ mod tests {
         let db = Arc::new(Database::memory().unwrap());
         db.save_project(&make_project("proj1", None)).unwrap();
         let router = ProviderRouter::new(db);
-        let err = router.select_providers_for_project("proj1").await.unwrap_err();
+        let err = router
+            .select_providers_for_project("proj1")
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::NoProvidersConfigured));
     }
 

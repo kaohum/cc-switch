@@ -38,7 +38,12 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
-use axum::{extract::{Path, State}, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
@@ -112,7 +117,16 @@ pub async fn handle_messages(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None, None).await
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::Claude,
+        "Claude",
+        "claude",
+        None,
+        None,
+    )
+    .await
 }
 
 pub async fn handle_claude_desktop_messages(
@@ -190,8 +204,16 @@ async fn handle_messages_for_app(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str, project_id).await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        project_id,
+    )
+    .await?;
 
     let raw_endpoint = uri
         .path_and_query()
@@ -369,6 +391,7 @@ async fn handle_claude_transform(
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
+            let project_id = ctx.project_id.clone();
             // 用 ctx 的 app_type：Claude Desktop 网关也走此转换路径，硬编码
             // "claude" 会把 claude-desktop 的行错记到 claude 名下
             let app_type_str = ctx.app_type_str;
@@ -387,6 +410,7 @@ async fn handle_claude_transform(
                         let state = state.clone();
                         let provider_id = provider_id.clone();
                         let session_id = session_id.clone();
+                        let project_id = project_id.clone();
                         let request_model = request_model.clone();
                         let outbound_model = fallback_model.clone();
 
@@ -404,6 +428,7 @@ async fn handle_claude_transform(
                                 true,
                                 status_code,
                                 Some(session_id),
+                                project_id,
                             )
                             .await;
                         });
@@ -551,6 +576,7 @@ async fn handle_claude_transform(
                     false,
                     status.as_u16(),
                     Some(session_id),
+                    None,
                 )
                 .await;
             }
@@ -658,8 +684,16 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex", None).await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        None,
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -724,8 +758,16 @@ pub async fn handle_responses(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex", None).await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        None,
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
@@ -803,8 +845,16 @@ pub async fn handle_responses_compact(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex", None).await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        None,
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
@@ -940,6 +990,7 @@ async fn handle_codex_chat_to_responses_transform(
                             true,
                             status.as_u16(),
                             Some(session_id),
+                            None,
                         )
                         .await;
                     });
@@ -1055,6 +1106,7 @@ async fn handle_codex_chat_to_responses_transform(
                     false,
                     status.as_u16(),
                     Some(session_id),
+                    None,
                 )
                 .await;
             }
@@ -1374,9 +1426,17 @@ pub async fn handle_gemini(
     };
 
     // Gemini 的模型名称在 URI 中
-    let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini", None)
-        .await?
-        .with_model_from_uri(&uri);
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Gemini,
+        "Gemini",
+        "gemini",
+        None,
+    )
+    .await?
+    .with_model_from_uri(&uri);
 
     // 提取完整的路径和查询参数
     let endpoint = uri
@@ -2002,6 +2062,7 @@ fn log_forward_error(
         is_streaming,
         Some(ctx.session_id.clone()),
         None,
+        ctx.project_id.clone(),
     ) {
         log::warn!("记录失败请求日志失败: {e}");
     }
@@ -2025,6 +2086,7 @@ async fn log_usage(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    project_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -2059,6 +2121,7 @@ async fn log_usage(
         session_id,
         None, // provider_type
         is_streaming,
+        project_id,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }

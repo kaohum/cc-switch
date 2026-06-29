@@ -70,6 +70,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 项目工程目录 ID（项目级路由时填入，全局路由时为 None），用于 usage 归因
+    pub project_id: Option<String>,
 }
 
 impl RequestContext {
@@ -178,6 +180,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            project_id: project_id.map(str::to_string),
         })
     }
 

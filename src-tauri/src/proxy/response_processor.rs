@@ -518,6 +518,7 @@ fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        None,
                     )
                     .await;
                 });
@@ -544,6 +545,7 @@ fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        None,
                     )
                     .await;
                 });
@@ -582,6 +584,7 @@ fn spawn_log_usage(
         .unwrap_or_else(|| ctx.request_model.clone());
     let latency_ms = ctx.latency_ms();
     let session_id = ctx.session_id.clone();
+    let project_id = ctx.project_id.clone();
 
     tokio::spawn(async move {
         log_usage_internal(
@@ -597,6 +600,7 @@ fn spawn_log_usage(
             is_streaming,
             status_code,
             Some(session_id),
+            project_id,
         )
         .await;
     });
@@ -630,6 +634,7 @@ async fn log_usage_internal(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    project_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -668,6 +673,7 @@ async fn log_usage_internal(
         session_id,
         None, // provider_type
         is_streaming,
+        project_id,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
@@ -1021,6 +1027,7 @@ mod tests {
             false,
             200,
             None,
+            None,
         )
         .await;
 
@@ -1090,6 +1097,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;
@@ -1170,6 +1178,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;

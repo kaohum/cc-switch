@@ -298,11 +298,17 @@ impl ProjectService {
                 .and_then(|o| o.get_mut("env"))
                 .and_then(|v| v.as_object_mut());
             if let Some(env) = env_obj {
-                env.insert("ANTHROPIC_BASE_URL".into(), Value::String(project_url.clone()));
+                env.insert(
+                    "ANTHROPIC_BASE_URL".into(),
+                    Value::String(project_url.clone()),
+                );
                 env.insert("ANTHROPIC_AUTH_TOKEN".into(), Value::String(token));
             } else if let Some(obj) = sanitized.as_object_mut() {
                 let mut env = Map::new();
-                env.insert("ANTHROPIC_BASE_URL".into(), Value::String(project_url.clone()));
+                env.insert(
+                    "ANTHROPIC_BASE_URL".into(),
+                    Value::String(project_url.clone()),
+                );
                 env.insert("ANTHROPIC_AUTH_TOKEN".into(), Value::String(token));
                 obj.insert("env".into(), Value::Object(env));
             }
