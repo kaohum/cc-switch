@@ -81,9 +81,8 @@ pub fn write_project_claude_settings(
 
 /// 在项目目录打开终端并执行命令（默认 `claude`，或用户自定义命令）。
 ///
-/// **跨平台直接启动终端在项目目录**，不依赖 `launch_terminal_running`（它的 `start`
-/// 不传 `/D`，新窗口起始目录是调用者 cwd）。claude 读项目根 `settings.local.json`
-/// 获取 provider 配置。
+/// 统一用 `launch_terminal_running`（cd + 命令）确保终端 cwd 是项目目录。
+/// claude 会自动读项目根 `.claude/settings.local.json`（含 provider 配置）。
 #[tauri::command]
 pub async fn open_project_terminal(
     state: State<'_, AppState>,
@@ -99,77 +98,11 @@ pub async fn open_project_terminal(
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| "claude".to_string());
 
-    let project_path = &project.path;
-    log::info!(
-        "[open_project_terminal] project='{}' path='{}' cmd='{}'",
-        project.name,
-        project_path,
-        cmd
-    );
-
-    // Windows: 用 cmd /C "完整命令行" 让 cmd 自己解析（避免 args 数组的转义问题）
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        // start 第一个参数是窗口标题（必须），/D 是起始目录，cmd /K 保持窗口
-        // 用嵌入引号的单字符串让 cmd 解析
-        let full_cmd = format!(
-            "start \"CC-Switch\" /D \"{}\" cmd /K \"{}\"",
-            project_path, cmd
-        );
-        log::info!("[open_project_terminal] full_cmd: {full_cmd}");
-        let result = Command::new("cmd").args(["/C", &full_cmd]).spawn();
-        match result {
-            Ok(_) => {
-                log::info!("[open_project_terminal] Windows cmd 启动成功，cwd={project_path}");
-                Ok(true)
-            }
-            Err(e) => Err(format!("启动终端失败: {e}")),
-        }
-    }
-
-    // macOS: osascript 打开 Terminal 在项目目录执行命令
-    #[cfg(target_os = "macos")]
-    {
-        let script = format!(
-            "tell application \"Terminal\"\n\
-             activate\n\
-             do script \"cd '{path}' && {cmd}\"\n\
-             end tell",
-            path = project_path.replace('\'', "'\\''"),
-            cmd = cmd.replace('\'', "'\\''"),
-        );
-        let result = std::process::Command::new("osascript")
-            .args(["-e", &script])
-            .spawn();
-        match result {
-            Ok(_) => Ok(true),
-            Err(e) => Err(format!("启动 Terminal 失败: {e}")),
-        }
-    }
-
-    // Linux: 写临时脚本 + gnome-terminal --working-directory
-    #[cfg(target_os = "linux")]
-    {
-        let temp_dir = std::env::temp_dir();
-        let script_file = temp_dir.join(format!("ccs_project_{}.sh", std::process::id()));
-        let content = format!(
-            "#!/usr/bin/env sh\ncd \"{}\" && {}\nread -r _\n",
-            project_path, cmd
-        );
-        std::fs::write(&script_file, &content).map_err(|e| format!("写入脚本失败: {e}"))?;
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("设置权限失败: {e}"))?;
-        let result = std::process::Command::new("gnome-terminal")
-            .args(["--working-directory", project_path])
-            .args(["--", "sh", script_file.to_string_lossy().as_ref()])
-            .spawn();
-        match result {
-            Ok(_) => Ok(true),
-            Err(e) => Err(format!("启动终端失败: {e}")),
-        }
-    }
+    // cd 到项目目录 + 执行命令（launch_terminal_running 确保终端在该目录启动）
+    let command_line = format!("cd \"{}\" && {}", project.path, cmd);
+    crate::commands::launch_terminal_running(&command_line, "project")
+        .map_err(|e| format!("启动终端失败: {e}"))?;
+    Ok(true)
 }
 
 /// 返回在项目目录启动 claude 的命令字符串（供前端复制到剪贴板）。
