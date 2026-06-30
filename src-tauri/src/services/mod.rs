@@ -33,7 +33,7 @@ pub mod webdav_sync;
 pub use config::ConfigService;
 pub use mcp::McpService;
 pub use omo::OmoService;
-pub use project::{CreateProjectRequest, ProjectService, UpdateProjectRequest};
+pub use project::{CreateProjectRequest, ProjectService, SetProviderResult, UpdateProjectRequest};
 pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;

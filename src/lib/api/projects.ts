@@ -4,6 +4,7 @@ import type {
   CreateProjectRequest,
   Project,
   ProjectPathValidation,
+  SetProviderResult,
   UpdateProjectRequest,
 } from "@/types/project";
 
@@ -40,13 +41,14 @@ export async function restoreProject(id: string): Promise<boolean> {
 
 /**
  * 设置项目绑定的 Claude provider。
- * 绑定后后端 best-effort 写入项目根 .claude/settings.json（路径不存在时只警告）。
+ * 绑定/解绑后后端 best-effort 同步写入项目根 .claude/settings.local.json：
+ * 写盘失败时 result.writeWarning 有值（如项目目录不存在），绑定本身仍成功。
  */
 export async function setProjectClaudeProvider(
   projectId: string,
   providerId: string | null,
-): Promise<Project> {
-  return invoke<Project>("set_project_claude_provider", {
+): Promise<SetProviderResult> {
+  return invoke<SetProviderResult>("set_project_claude_provider", {
     projectId,
     providerId,
   });

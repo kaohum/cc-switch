@@ -9,7 +9,9 @@
 use tauri::State;
 
 use crate::database::Project;
-use crate::services::{CreateProjectRequest, ProjectService, UpdateProjectRequest};
+use crate::services::{
+    CreateProjectRequest, ProjectService, SetProviderResult, UpdateProjectRequest,
+};
 use crate::store::AppState;
 
 #[tauri::command]
@@ -56,13 +58,14 @@ pub fn restore_project(state: State<'_, AppState>, id: String) -> Result<bool, S
         .map_err(|e| e.to_string())
 }
 
-/// 设置项目绑定的 Claude provider（自动更新数据库；M2 起追加写入项目根）。
+/// 设置项目绑定的 Claude provider（自动更新数据库；绑定/解绑均 best-effort 同步
+/// 写入项目根 `.claude/settings.local.json`，写盘失败冒泡进返回值的 `writeWarning`）。
 #[tauri::command]
 pub fn set_project_claude_provider(
     state: State<'_, AppState>,
     #[allow(non_snake_case)] projectId: String,
     #[allow(non_snake_case)] providerId: Option<String>,
-) -> Result<Project, String> {
+) -> Result<SetProviderResult, String> {
     ProjectService::set_claude_provider(&state.db, &projectId, providerId.as_deref())
         .map_err(|e| e.to_string())
 }

@@ -96,14 +96,21 @@ export function useProjects() {
     [reload, t],
   );
 
-  /** 设置项目绑定的 Claude provider（后端会 best-effort 写入项目根 settings.json） */
+  /** 设置项目绑定的 Claude provider（后端会 best-effort 写入项目根 settings.local.json） */
   const setProvider = useCallback(
     async (id: string, providerId: string | null): Promise<Project | null> => {
       try {
-        const p = await projectsApi.setProjectClaudeProvider(id, providerId);
+        const res = await projectsApi.setProjectClaudeProvider(id, providerId);
         await reload();
-        toast.success(t("projects.providerSetSuccess"));
-        return p;
+        // 绑定/解绑已落库；写盘失败时后端返回 writeWarning，toast 提示但不阻塞
+        if (res.writeWarning) {
+          toast.warning(
+            `${t("projects.providerSetSuccess")} — ${res.writeWarning}`,
+          );
+        } else {
+          toast.success(t("projects.providerSetSuccess"));
+        }
+        return res.project;
       } catch (error) {
         toast.error(String(error));
         return null;

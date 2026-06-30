@@ -43,3 +43,15 @@ export interface ProjectPathValidation {
   writable: boolean;
   parentExists: boolean;
 }
+
+/**
+ * 设置/解绑项目 Claude provider 的结果。
+ * 绑定/解绑始终先落库；settings.local.json 的写入是 best-effort：
+ * - 成功 → writtenPath 有值；
+ * - 失败（如项目目录不存在）→ writeWarning 有值（前端 toast 提示，不阻塞绑定）。
+ */
+export interface SetProviderResult {
+  project: Project;
+  writtenPath?: string;
+  writeWarning?: string;
+}

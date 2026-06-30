@@ -46,6 +46,11 @@ cc-switch fork 拓展：项目工程目录管理 + 项目级 Claude Provider 绑
 - **usage「工程」列归因补全（解决 B1 遗留的 Tech debt）**：之前 `project_id` 仅在极少数行命中（实测 9/38k），两根因都修：
   - **代理记账路径补 `project_id`**：`handle_claude_transform` 非流式 + `create_usage_collector` 流式透传——GLM/MiniMax 等 OpenAI 兼容 provider 走的路径——按 B1「暂传 None」遗留，现统一传 `ctx.project_id`。
   - **历史行回填**：新增 `attribute_claude_sessions_to_projects`，按 `~/.claude/projects/<encoded-cwd>` 匹配项目（编码规则 `: \ / _ → -`，已用真实数据验证），用与跨源去重同口径的指纹（model + 各 token 维度 + ±10min 时间戳）回填 `project_id`（代理行的 `session_id` 来自请求头，与会话文件名不一致，无法直接 join）。增量扫描（settings 表记上次扫描水位 + 项目集签名），steady-state ~100ms。
+- **项目路由模型错路由（核心 bug）**：自定义工程 + 自定义 provider 下，Claude Code 发出的**具体模型名**被 `model_mapper` 当成未知模型落到 `ANTHROPIC_MODEL`（default 档），**真实路由到错误模型**——实测 SLG 项目 `glm-4.5-air → glm-5.2`、Information 项目 `minimax-m2.5 → MiniMax-M3`（路由到更贵的 opus 档，已实际多花费用；全局 provider 因写 `claude-*` 别名而不受影响）。根因：项目 `settings.local.json` 直接写入 provider 的具体模型名（`ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.5-air`），Claude Code 据此发送具体名；而全局 takeover 会改写成 `claude-*` 别名由代理映射——项目 writer 缺这步。两道互补修复：
+  - **`model_mapper` 幂等保护**：入参已是某档已配置的目标模型时原样透传（新增 `is_configured_target`，含 `[1M]` 后缀剥离比对），不再走 default 兜底。放在关键字匹配**之后**——`claude-*` 别名（全局常见路径）零额外开销；检查本身至多 5 次 `eq_ignore_ascii_case`、零堆分配、短路。
+  - **项目 writer 与全局 takeover 同构**：proxy 模式下复用新抽出的 `ProxyService::rewrite_claude_model_env_to_aliases`，把具体模型名改写成 `claude-*` 别名（真名存 `*_NAME`），由代理映射。新写入的项目 settings.local.json 走别名 + 快速关键字分支；**现存文件**由幂等保护兜底（或在项目设置里重选 provider 触发重写）。
+- **解绑 provider 不写盘**：清空项目 provider 时 `set_claude_provider` 跳过 `settings.local.json` 写入，残留失效的项目代理端点（`/claude/project/<id>/`）导致 Claude Code 报 `NoProvidersConfigured`。修复：解绑时调 `strip_claude_env_from_project` 移除 cc-switch 管理的 `env` 段（保留用户 hooks/plugins 等非 env 字段；只剩空对象则删文件），Claude Code 回退到全局配置保持可用（最小侵入）。
+- **项目 settings 写盘失败静默**：`settings.local.json` 写入失败（如项目目录尚未 clone）只 `log::warn`，前端仍弹「设置成功」。修复：`set_project_claude_provider` 返回 `SetProviderResult { project, writtenPath, writeWarning }`，写盘失败把原因填 `writeWarning`，前端 `toast.warning` 提示（绑定/解绑本身仍先落库、不阻塞）。
 
 ### Tech debt / 已知限制
 

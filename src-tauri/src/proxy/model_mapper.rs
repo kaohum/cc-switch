@@ -62,7 +62,7 @@ impl ModelMapping {
     pub fn map_model(&self, original_model: &str) -> String {
         let model_lower = original_model.to_lowercase();
 
-        // 1. 按模型类型匹配
+        // 1. 按模型类型匹配（claude-* 别名快速路径：命中关键字即返回，零额外开销）
         if model_lower.contains("fable") {
             if let Some(ref m) = self.fable_model {
                 return m.clone();
@@ -89,13 +89,47 @@ impl ModelMapping {
             }
         }
 
-        // 2. 默认模型
+        // 2. 幂等保护：未命中 claude-* 关键字时，若入参已是某档已配置的具体目标模型，
+        //    原样返回，不再走 default 兜底。
+        //    背景：项目级 settings.local.json 直接写入 provider 的具体模型名（如 glm-4.5-air），
+        //    Claude Code 据此发送该具体名；若落到 default（ANTHROPIC_MODEL=glm-5.2）会把
+        //    haiku 档请求真实改写到 opus/default 档——这是项目路由下计费模型被错误路由的根因。
+        //    全局 takeover 写入的是 claude-* 别名（命中上方关键字），故不受影响。
+        //    放在关键字匹配之后：claude-* 别名（最常见的全局路径）零额外开销；该检查本身
+        //    至多 5 次 eq_ignore_ascii_case 字节比较、零堆分配、命中即短路。
+        if self.is_configured_target(&model_lower) {
+            return original_model.to_string();
+        }
+
+        // 3. 默认模型（兜底：真正未识别的模型）
         if let Some(ref m) = self.default_model {
             return m.clone();
         }
 
-        // 3. 无映射，保持原样
+        // 4. 无映射，保持原样
         original_model.to_string()
+    }
+
+    /// 入参是否等于某个已配置的目标模型（大小写不敏感）。
+    ///
+    /// 用于 [`map_model`] 的幂等保护：客户端若已发送某档位的具体目标模型名
+    /// （项目级 settings.local.json 直接写入 ANTHROPIC_DEFAULT_*_MODEL 的场景），
+    /// 不应再被 default 兜底改写。同时覆盖剥离 `[1M]` 后缀后的比较，避免
+    /// opus 档 `glm-5.2[1M]` 与客户端发送的 `glm-5.2` 错过。
+    fn is_configured_target(&self, model_lower: &str) -> bool {
+        let candidates: [Option<&String>; 5] = [
+            self.haiku_model.as_ref(),
+            self.sonnet_model.as_ref(),
+            self.opus_model.as_ref(),
+            self.fable_model.as_ref(),
+            self.default_model.as_ref(),
+        ];
+        candidates.into_iter().flatten().any(|target| {
+            target.eq_ignore_ascii_case(model_lower)
+                // 同时比对剥离本地 [1M] 能力标记后的形式
+                || strip_one_m_suffix_for_upstream(target)
+                    .eq_ignore_ascii_case(model_lower)
+        })
     }
 }
 
@@ -335,6 +369,44 @@ mod tests {
         assert_eq!(result["model"], "claude-sonnet-4-5");
         assert_eq!(original, Some("claude-sonnet-4-5".to_string()));
         assert!(mapped.is_none());
+    }
+
+    #[test]
+    fn test_concrete_target_model_passes_through_unchanged() {
+        // 回归（项目级路由 bug）：项目 settings.local.json 写入 provider 的具体模型名
+        // （ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.5-air 等），Claude Code 直接发送该具体名。
+        // model_mapper 必须幂等——入参已是某档目标模型时原样透传，不能再被 default
+        // （ANTHROPIC_MODEL=glm-5.2）兜底改写，否则会把 haiku 请求真实路由到 opus 档。
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "glm-5.2",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.1",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2[1M]",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL": "glm-5.2[1M]"
+            }
+        });
+
+        // haiku 档目标模型：必须原样透传，不能变成 default 的 glm-5.2
+        let (result, _original, mapped) =
+            apply_model_mapping(json!({"model": "glm-4.5-air"}), &provider);
+        assert_eq!(result["model"], "glm-4.5-air");
+        assert!(mapped.is_none(), "已是目标模型、透传时不应报告映射");
+
+        // sonnet 档目标模型同理
+        let (result, _, _) = apply_model_mapping(json!({"model": "glm-5.1"}), &provider);
+        assert_eq!(result["model"], "glm-5.1");
+
+        // opus 档目标模型（带 [1M] 后缀）也应透传，由后续 strip_one_m_suffix 统一剥离
+        let (result, _, _) = apply_model_mapping(json!({"model": "glm-5.2[1M]"}), &provider);
+        assert_eq!(result["model"], "glm-5.2[1M]");
+
+        // 幂等保护不能误伤 claude-* 别名：仍应正常映射到对应档位
+        let (result, _, mapped) =
+            apply_model_mapping(json!({"model": "claude-haiku-4-5"}), &provider);
+        assert_eq!(result["model"], "glm-4.5-air");
+        assert_eq!(mapped, Some("glm-4.5-air".to_string()));
     }
 
     #[test]
