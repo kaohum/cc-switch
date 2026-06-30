@@ -489,6 +489,7 @@ fn create_usage_collector(
     let stream_parser = parser_config.stream_parser;
     let model_extractor = parser_config.model_extractor;
     let session_id = ctx.session_id.clone();
+    let project_id = ctx.project_id.clone();
 
     Some(SseUsageCollector::new(
         start_time,
@@ -501,6 +502,7 @@ fn create_usage_collector(
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
+                let project_id = project_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
 
@@ -518,7 +520,7 @@ fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
-                        None,
+                        project_id,
                     )
                     .await;
                 });
@@ -528,6 +530,7 @@ fn create_usage_collector(
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
+                let project_id = project_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
 
@@ -545,7 +548,7 @@ fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
-                        None,
+                        project_id,
                     )
                     .await;
                 });

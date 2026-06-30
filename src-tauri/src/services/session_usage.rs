@@ -15,6 +15,7 @@ use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
     effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
+    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -104,7 +105,287 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
         );
     }
 
+    // 会话 → 项目归因：按 ~/.claude/projects/<encoded-cwd> 回填 Claude 用量行的
+    // project_id。归因是「尽力而为」的增强（不影响 token/成本数据），失败仅告警不阻断同步。
+    match attribute_claude_sessions_to_projects(db) {
+        Ok(n) if n > 0 => log::info!("[SESSION-SYNC] 归因 project_id 回填 {} 行", n),
+        Ok(_) => {}
+        Err(e) => log::warn!("[SESSION-SYNC] project_id 归因失败: {e}"),
+    }
+
     Ok(result)
+}
+
+/// 镜像 Claude Code 的项目目录编码：把 `:`、`\`、`/`、`_` 替换为 `-`。
+///
+/// 例：`D:\work\slg` → `D--work-slg`；`D:\work\slg_google_beta` → `D--work-slg-google-beta`。
+/// 采用「正向编码项目路径」而非「解码目录名」，规避 `-` ↔ {`\`,`/`,`_`} 的有损歧义。
+fn encode_cwd_to_claude_dir(path: &str) -> String {
+    path.chars()
+        .map(|c| match c {
+            ':' | '\\' | '/' | '_' => '-',
+            _ => c,
+        })
+        .collect()
+}
+
+/// 同一 `message.id` 的多条 assistant 记录的去重判定（与 `sync_single_file` 同口径）：
+/// 优先保留有 `stop_reason` 的；否则取 `output_tokens` 更大者。
+fn should_replace_assistant(prev: &ParsedAssistantUsage, new: &ParsedAssistantUsage) -> bool {
+    if new.stop_reason.is_some() && prev.stop_reason.is_none() {
+        return true;
+    }
+    if new.stop_reason.is_some() == prev.stop_reason.is_some() {
+        return new.output_tokens > prev.output_tokens;
+    }
+    false
+}
+
+/// 解析单个会话 `*.jsonl`，按 `message.id` 去重后返回有计费 token 的 assistant 消息。
+///
+/// 供工程归因使用：每条消息的 (model, tokens, timestamp) 指纹用于匹配代理行。
+fn parse_assistant_messages_in_file(path: &Path) -> Vec<ParsedAssistantUsage> {
+    let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
+
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+    for line_result in BufReader::new(file).lines() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(_) => continue, // 容忍不完整的最后一行
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let message = match value.get("message") {
+            Some(m) => m,
+            None => continue,
+        };
+        let msg_id = match message.get("id").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let usage = match message.get("usage") {
+            Some(u) => u,
+            None => continue,
+        };
+        let parsed = ParsedAssistantUsage {
+            message_id: msg_id.clone(),
+            model: message
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            input_tokens: usage
+                .get("input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            output_tokens: usage
+                .get("output_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            cache_read_tokens: usage
+                .get("cache_read_input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            cache_creation_tokens: usage
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            stop_reason: message
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            timestamp: value
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            session_id: None,
+        };
+        let should_replace = match messages.get(&msg_id) {
+            None => true,
+            Some(existing) => should_replace_assistant(existing, &parsed),
+        };
+        if should_replace {
+            messages.insert(msg_id, parsed);
+        }
+    }
+
+    messages
+        .into_values()
+        .filter(|m| {
+            m.input_tokens > 0
+                || m.output_tokens > 0
+                || m.cache_read_tokens > 0
+                || m.cache_creation_tokens > 0
+        })
+        .collect()
+}
+
+/// 用消息指纹（model + 各 token 维度 + ±窗口时间戳）回填匹配 Claude 行的 `project_id`。
+///
+/// 指纹口径与跨源去重 `has_matching_proxy_usage_log` 一致，因此命中的就是该会话消息
+/// 对应的代理行（代理行的 session_id 来自请求头，与会话文件名不一致，无法直接相连，
+/// 只能靠指纹匹配）。不限定 `data_source`，故 session_log 行也会被一并归因；幂等。
+/// 每次调用独立获取 DB 锁，避免长扫描期间长时间持锁阻塞其它 DB 操作。
+fn update_project_id_by_fingerprint(
+    db: &Database,
+    project_id: &str,
+    msg: &ParsedAssistantUsage,
+) -> Result<usize, AppError> {
+    let created_at = msg
+        .timestamp
+        .as_ref()
+        .and_then(|ts| {
+            chrono::DateTime::parse_from_rfc3339(ts)
+                .ok()
+                .map(|dt| dt.timestamp())
+        })
+        .unwrap_or(0);
+    if created_at == 0 {
+        return Ok(0); // 无时间戳无法做时间窗口匹配
+    }
+
+    let conn = lock_conn!(db.conn);
+    let updated = conn
+        .execute(
+            "UPDATE proxy_request_logs SET project_id = ?1
+             WHERE project_id IS NULL AND app_type = 'claude'
+               AND status_code >= 200 AND status_code < 300
+               AND input_tokens = ?2 AND output_tokens = ?3
+               AND cache_read_tokens = ?4 AND cache_creation_tokens = ?5
+               AND created_at BETWEEN ?6 - ?7 AND ?6 + ?7
+               AND (LOWER(model) = LOWER(?8) OR LOWER(model) = 'unknown' OR LOWER(?8) = 'unknown')",
+            rusqlite::params![
+                project_id,
+                msg.input_tokens as i64,
+                msg.output_tokens as i64,
+                msg.cache_read_tokens as i64,
+                msg.cache_creation_tokens as i64,
+                created_at,
+                SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                msg.model,
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("回填 project_id 失败: {e}")))?;
+    Ok(updated)
+}
+
+/// 把 Claude 会话归因到项目并回填 `project_id`（在每次会话同步末尾调用）。
+///
+/// 思路：Claude Code 会话文件位于 `~/.claude/projects/<encoded-cwd>/*.jsonl`，目录名
+/// 即编码后的工作目录。把每个项目的 `path` 同样编码后与目录名匹配，命中的目录里解析
+/// 出 assistant 消息，用指纹回填对应 Claude 用量行的 `project_id`。
+///
+/// 幂等：仅更新 `project_id IS NULL` 的行。
+///
+/// 增量：用 settings 表记录「上次扫描时间」与「上次的项目集合签名」。每次只解析
+/// `mtime > 上次扫描时间` 的会话文件，避免在 steady-state（或大量来自未登记目录、
+/// 永远无法归因的 Claude 行存在时）反复全量扫描。项目增删/改路径会使签名变化 →
+/// 触发一次全量重扫，保证新项目的历史用量也被归因。
+pub fn attribute_claude_sessions_to_projects(db: &Database) -> Result<usize, AppError> {
+    const SETTING_SCAN_NS: &str = "claude_session_attr_last_scan_ns";
+    const SETTING_PROJ_SIG: &str = "claude_session_attr_proj_sig";
+
+    // encoded-cwd → project_id
+    let mut by_encoded: HashMap<String, String> = db
+        .list_projects(false)?
+        .into_iter()
+        .map(|p| (encode_cwd_to_claude_dir(&p.path), p.id))
+        .collect();
+    let current_sig = project_signature(&by_encoded);
+
+    // 项目集合变化（新增/删除/改路径）→ 强制全量重扫；否则按上次扫描时间增量扫
+    let sig_unchanged = db.get_setting(SETTING_PROJ_SIG)? == Some(current_sig.clone());
+    let last_scan_ns = if sig_unchanged {
+        db.get_setting(SETTING_SCAN_NS)?
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let scan_start_ns = now_nanos();
+
+    if by_encoded.is_empty() {
+        // 没有项目也要推进扫描水位，避免下次空过一遍目录
+        db.set_setting(SETTING_SCAN_NS, &scan_start_ns.to_string())?;
+        db.set_setting(SETTING_PROJ_SIG, &current_sig)?;
+        return Ok(0);
+    }
+
+    let projects_dir = get_claude_config_dir().join("projects");
+    let mut total_updated = 0usize;
+
+    let entries = match fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(0), // 还没跑过 Claude Code
+    };
+    for entry in entries.flatten() {
+        let dir_path = entry.path();
+        if !dir_path.is_dir() {
+            continue;
+        }
+        let dir_name = match dir_path.file_name().and_then(|n| n.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let project_id = match by_encoded.remove(dir_name) {
+            Some(p) => p,
+            None => continue, // 用户未登记此工作目录为项目
+        };
+
+        // 只解析自上次扫描后变更过的顶层 *.jsonl（增量）
+        let files = match fs::read_dir(&dir_path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for file_entry in files.flatten() {
+            let file_path = file_entry.path();
+            if !(file_path.is_file()
+                && file_path.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+            {
+                continue;
+            }
+            let mtime_ns = fs::metadata(&file_path)
+                .ok()
+                .map(|m| metadata_modified_nanos(&m))
+                .unwrap_or(0);
+            if mtime_ns <= last_scan_ns {
+                continue;
+            }
+            for msg in parse_assistant_messages_in_file(&file_path) {
+                total_updated += update_project_id_by_fingerprint(db, &project_id, &msg)?;
+            }
+        }
+    }
+
+    db.set_setting(SETTING_SCAN_NS, &scan_start_ns.to_string())?;
+    db.set_setting(SETTING_PROJ_SIG, &current_sig)?;
+    Ok(total_updated)
+}
+
+/// 当前项目集合的稳定签名（排序后的 encoded-cwd 列表）。增删项目或改路径都会变化。
+fn project_signature(by_encoded: &HashMap<String, String>) -> String {
+    let mut keys: Vec<&str> = by_encoded.keys().map(|s| s.as_str()).collect();
+    keys.sort_unstable();
+    keys.join(",")
+}
+
+/// 当前时间的 Unix 纳秒戳（`SystemTime::now` 封装，便于测试与一致性）。
+fn now_nanos() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
 }
 
 /// 收集目录下所有 .jsonl 文件（含子 agent 文件）
@@ -793,6 +1074,124 @@ mod tests {
         drop(conn);
 
         fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_encode_cwd_to_claude_dir() {
+        // 对照用户真实环境验证编码（含 `_ → -` 这一非显然规则）
+        assert_eq!(encode_cwd_to_claude_dir(r"D:\work\slg"), "D--work-slg");
+        assert_eq!(
+            encode_cwd_to_claude_dir(r"D:\work\slg_google_beta"),
+            "D--work-slg-google-beta"
+        );
+        assert_eq!(
+            encode_cwd_to_claude_dir(r"D:\work\slg-ai"),
+            "D--work-slg-ai"
+        );
+        assert_eq!(encode_cwd_to_claude_dir(r"D:\work\slg2"), "D--work-slg2");
+        assert_eq!(
+            encode_cwd_to_claude_dir(r"E:\Projects\cc-switch"),
+            "E--Projects-cc-switch"
+        );
+    }
+
+    #[test]
+    fn test_parse_assistant_messages_in_file_dedup_and_filters() {
+        let tmp = std::env::temp_dir().join(format!("cc-switch-parse-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("session-1.jsonl");
+
+        // 四行：system 行（跳过）/ 同 id 两条 assistant（去重取 output 大的）/ 全 0 token（过滤）
+        let system = r#"{"type":"system","message":{"id":"m_sys"}}"#;
+        let lo = r#"{"type":"assistant","message":{"id":"msg_dup","model":"claude-sonnet-4-5","usage":{"input_tokens":3,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-29T12:00:00Z"}"#;
+        let hi = r#"{"type":"assistant","message":{"id":"msg_dup","model":"claude-sonnet-4-5","usage":{"input_tokens":3,"output_tokens":150,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"stop_reason":"end_turn"},"timestamp":"2026-06-29T12:00:00Z"}"#;
+        let zero = r#"{"type":"assistant","message":{"id":"msg_zero","model":"claude-sonnet-4-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-29T12:01:00Z"}"#;
+        fs::write(&file, format!("{system}\n{lo}\n{hi}\n{zero}\n")).unwrap();
+
+        let msgs = parse_assistant_messages_in_file(&file);
+        assert_eq!(msgs.len(), 1, "去重后只剩 1 条计费消息（全 0 行被过滤）");
+        let m = &msgs[0];
+        assert_eq!(m.message_id, "msg_dup");
+        assert_eq!(m.output_tokens, 150, "同 id 取 output 较大者");
+        assert_eq!(m.model, "claude-sonnet-4-5");
+        assert_eq!(m.timestamp.as_deref(), Some("2026-06-29T12:00:00Z"));
+
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_update_project_id_by_fingerprint_matches() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts = "2026-06-29T12:00:00Z";
+        let created_at = chrono::DateTime::parse_from_rfc3339(ts)
+            .unwrap()
+            .timestamp();
+
+        // msg 指纹：claude / sonnet / (in=100,out=50,cr=10,cc=5) / ts
+        let msg = ParsedAssistantUsage {
+            message_id: "msg_x".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 5,
+            stop_reason: Some("end_turn".to_string()),
+            timestamp: Some(ts.to_string()),
+            session_id: None,
+        };
+
+        // 四行：完全命中 / token 不同 / 非 Claude / 时间窗外
+        {
+            let conn = lock_conn!(db.conn);
+            for (rid, app_type, inp, c_at) in [
+                ("req-hit", "claude", 100i64, created_at),
+                ("req-wrong-tokens", "claude", 999, created_at),
+                ("req-codex", "codex", 100, created_at),
+                ("req-out-of-window", "claude", 100, created_at + 3600),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        total_cost_usd, latency_ms, status_code, created_at, data_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        rid,
+                        "provider-1",
+                        app_type,
+                        "claude-sonnet-4-5",
+                        "claude-sonnet-4-5",
+                        inp,
+                        50,
+                        10,
+                        5,
+                        "0.01",
+                        100,
+                        200,
+                        c_at,
+                        "proxy",
+                    ],
+                )?;
+            }
+        }
+        // 释放 DB 锁后再调用：update_project_id_by_fingerprint 内部自行加锁，重入会死锁
+        let updated = update_project_id_by_fingerprint(&db, "proj-slg", &msg)?;
+        assert_eq!(updated, 1, "只有指纹完全命中的行被回填");
+
+        let conn = lock_conn!(db.conn);
+        let pid_of = |rid: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT project_id FROM proxy_request_logs WHERE request_id = ?1",
+                [rid],
+                |row| row.get(0),
+            )
+            .ok()
+        };
+        assert_eq!(pid_of("req-hit").as_deref(), Some("proj-slg"));
+        assert!(pid_of("req-wrong-tokens").is_none(), "token 不匹配不应回填");
+        assert!(pid_of("req-codex").is_none(), "非 Claude 行不应回填");
+        assert!(pid_of("req-out-of-window").is_none(), "时间窗外不应回填");
         Ok(())
     }
 }

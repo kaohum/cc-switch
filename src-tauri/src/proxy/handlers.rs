@@ -562,6 +562,7 @@ async fn handle_claude_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let session_id = ctx.session_id.clone();
+            let project_id = ctx.project_id.clone();
             async move {
                 log_usage(
                     &state,
@@ -576,7 +577,7 @@ async fn handle_claude_transform(
                     false,
                     status.as_u16(),
                     Some(session_id),
-                    None,
+                    project_id,
                 )
                 .await;
             }

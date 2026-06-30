@@ -108,6 +108,12 @@ pub struct RequestForwarder {
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
+    /// 项目路由 ID（None = 全局路径，Some(_) = 项目路由）。
+    ///
+    /// 项目路由的请求选中的 provider 是项目绑定的，与全局 current provider 不同是设计预期，
+    /// 不应触发「同步 UI/托盘」逻辑——否则会把全局 current 错误地切到项目 provider，
+    /// 影响其它项目 / 独立启动 Claude Code 时的路由选择。
+    project_id: Option<String>,
     /// 代理会话 ID（用于 Gemini Native shadow replay）
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
@@ -195,6 +201,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        project_id: Option<String>,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -208,6 +215,7 @@ impl RequestForwarder {
             failover_manager,
             app_handle,
             current_provider_id_at_start,
+            project_id,
             session_id,
             session_client_provided,
             rectifier_config,
@@ -219,6 +227,22 @@ impl RequestForwarder {
             ),
             max_attempts,
         }
+    }
+
+    /// 是否需要把全局 current provider 同步到刚成功的 provider（触发 UI/托盘 + 写盘）。
+    ///
+    /// **项目路由短路**：当 `self.project_id` 非空（即本请求来自 `/claude/project/<id>/` 端点），
+    /// 选中的 provider 是项目绑定的，与全局 current provider 不同是设计预期，不应触发同步
+    /// 逻辑——否则会把全局 current 错误地切到项目 provider，影响其它项目 / 独立启动
+    /// Claude Code 时的路由选择。
+    ///
+    /// 全局路径下（`project_id == None`），故障转移或多 provider 队列命中非 current 的
+    /// provider 时应当同步（让 UI/托盘反映实际使用的 provider）。
+    fn should_sync_current_to_ui(&self, provider_id: &str, _app_type: &str) -> bool {
+        if self.project_id.is_some() {
+            return false;
+        }
+        self.current_provider_id_at_start.as_str() != provider_id
     }
 
     async fn record_success_result(
@@ -493,7 +517,7 @@ impl RequestForwarder {
                         status.success_requests += 1;
                         status.last_error = None;
                         let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                            self.should_sync_current_to_ui(&provider.id, app_type_str);
                         if should_switch {
                             status.failover_count += 1;
 
@@ -595,9 +619,8 @@ impl RequestForwarder {
                                         let mut status = self.status.write().await;
                                         status.success_requests += 1;
                                         status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                        let should_switch = self
+                                            .should_sync_current_to_ui(&provider.id, app_type_str);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -741,9 +764,10 @@ impl RequestForwarder {
                                             let mut status = self.status.write().await;
                                             status.success_requests += 1;
                                             status.last_error = None;
-                                            let should_switch =
-                                                self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
+                                            let should_switch = self.should_sync_current_to_ui(
+                                                &provider.id,
+                                                app_type_str,
+                                            );
                                             if should_switch {
                                                 status.failover_count += 1;
 
@@ -905,9 +929,8 @@ impl RequestForwarder {
                                         let mut status = self.status.write().await;
                                         status.success_requests += 1;
                                         status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                        let should_switch = self
+                                            .should_sync_current_to_ui(&provider.id, app_type_str);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -2844,6 +2867,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            project_id: None,
         }
     }
 

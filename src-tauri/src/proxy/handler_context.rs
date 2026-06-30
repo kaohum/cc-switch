@@ -249,6 +249,7 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            self.project_id.clone(),
         )
     }
 

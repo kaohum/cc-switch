@@ -42,11 +42,15 @@ cc-switch fork 拓展：项目工程目录管理 + 项目级 Claude Provider 绑
 - **`add_column_if_missing` 幂等**：migrate_v12_to_v13 用幂等 helper（避免 create_tables 与 migrate 重复 ALTER 列导致 `duplicate column name`）
 - **终端 cwd 不对**（之前误用 open_provider_terminal，导致终端启动在 `C:\Users\xxx`）：统一改用 `launch_terminal_running(cd "<项目根>" && claude)`
 - **provider 卡片点击行为修正**：chip 点击改为打开项目设置（之前是打开终端，用户反馈不对）
+- **项目路由不再改写全局 current provider**：forwarder「故障转移后同步 UI」用「全局 current ≠ 实际 provider」判定是否同步，但项目路由（`/claude/project/<id>/`）下两者天然不等（项目用自己绑定的 provider），导致**每个项目请求成功都把全局 current 改写成项目 provider**，连带污染独立启动的 Claude Code（表现为切到某项目跑对话后，全局 provider 被自动换成该项目的 provider，常引发 OpenCode Go 之类 provider 的 `tool_call_id not found` 400）。修复：`RequestForwarder` 加 `project_id` 字段 + `should_sync_current_to_ui` guard，项目路由短路不动全局 current；4 处 `should_switch` 判断统一改走该 guard。全局路径（故障转移命中非 current provider）行为不变。
+- **usage「工程」列归因补全（解决 B1 遗留的 Tech debt）**：之前 `project_id` 仅在极少数行命中（实测 9/38k），两根因都修：
+  - **代理记账路径补 `project_id`**：`handle_claude_transform` 非流式 + `create_usage_collector` 流式透传——GLM/MiniMax 等 OpenAI 兼容 provider 走的路径——按 B1「暂传 None」遗留，现统一传 `ctx.project_id`。
+  - **历史行回填**：新增 `attribute_claude_sessions_to_projects`，按 `~/.claude/projects/<encoded-cwd>` 匹配项目（编码规则 `: \ / _ → -`，已用真实数据验证），用与跨源去重同口径的指纹（model + 各 token 维度 + ±10min 时间戳）回填 `project_id`（代理行的 `session_id` 来自请求头，与会话文件名不一致，无法直接 join）。增量扫描（settings 表记上次扫描水位 + 项目集签名），steady-state ~100ms。
 
 ### Tech debt / 已知限制
 
 - **M1 数据层**：DAO 接受 `now_millis: i64` 参数而非内部调 `chrono`（可测性 + 测试能断言精确时间戳），service 层调用时传 `chrono::Utc::now().timestamp_millis()`
-- **B1 usage 归因覆盖**：非流式（`spawn_log_usage`）+ Claude 转换流式第一处（handlers 408 穿透）已归因；其他 5 处流式/转换路径闭包穿透复杂，传 `None`（流式请求工程列可能为空）
+- **B1 usage 归因覆盖**：~~其他 5 处流式/转换路径闭包穿透复杂，传 `None`（流式请求工程列可能为空）~~ → **已修复**（见上 Fixed「usage「工程」列归因补全」），所有 Claude 记账路径现在都透传 `project_id`；历史行增量回填。
 - **MVP 仅 Claude**：Codex/Gemini/OpenCode/OpenClaw/Hermes 的项目级支持未实现
 - **macOS 跨编译**：本机（Windows）无法交叉编译 macOS `.dmg`；需 GitHub Actions（macos-14 runner）或 Mac 机器
 
