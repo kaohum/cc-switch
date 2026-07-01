@@ -253,28 +253,6 @@ impl ProxyService {
         fields
     }
 
-    /// 把 Claude 配置 env 里的具体模型名改写成稳定的 `claude-*` 角色别名，
-    /// 真实模型名存入对应 `*_NAME` 字段。供「项目级路由」在 proxy 模式下复用
-    /// 全局 takeover 的同名逻辑——让 Claude Code 始终发送别名，由本地代理映射到
-    /// 当前供应商的真实模型，避免具体名落到 [`model_mapper`] 的 default 兜底。
-    ///
-    /// 仅改写 `*_MODEL` / `*_NAME` / legacy `ANTHROPIC_MODEL` 等键，**不动**
-    /// `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`（项目侧由调用方另行设置端点与令牌）。
-    /// 调用方负责确保仅在 proxy 模式下调用：直连模式下必须保留具体模型名。
-    pub(crate) fn rewrite_claude_model_env_to_aliases(config: &mut Value) {
-        // 必须先 snapshot：build_ 内部读取 env，之后的 remove/insert 不能影响它
-        let fields = Self::build_claude_takeover_model_fields(config);
-        let Some(env) = config.get_mut("env").and_then(Value::as_object_mut) else {
-            return;
-        };
-        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
-            env.remove(key);
-        }
-        for (key, value) in fields {
-            env.insert(key.to_string(), Value::String(value));
-        }
-    }
-
     fn push_claude_takeover_role_fields(
         fields: &mut Vec<(&'static str, String)>,
         env: &Map<String, Value>,
@@ -2866,52 +2844,6 @@ mod tests {
             env.get("ANTHROPIC_AUTH_TOKEN").is_none(),
             "managed OAuth providers should avoid Claude Auth Token login semantics"
         );
-    }
-
-    #[test]
-    fn rewrite_claude_model_env_to_aliases_matches_global_takeover_semantics() {
-        // 项目级路由复用全局 takeover 的模型别名改写：具体模型名 → claude-* 别名，
-        // 真名存 _NAME；ANTHROPIC_MODEL 移除；BASE_URL/TOKEN 不动（由项目侧另行设置）。
-        let mut config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
-                "ANTHROPIC_AUTH_TOKEN": "tok-glm",
-                "ANTHROPIC_MODEL": "glm-5.2",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.1",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2[1M]"
-            }
-        });
-        ProxyService::rewrite_claude_model_env_to_aliases(&mut config);
-
-        let env = config["env"].as_object().expect("env present");
-        // 具体名 → 标准 claude-* 别名（opus 带 [1M]）
-        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-haiku-4-5");
-        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-4-6");
-        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "claude-opus-4-8[1M]");
-        // 真实模型名存入 _NAME
-        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"], "glm-4.5-air");
-        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"], "glm-5.2");
-        // ANTHROPIC_MODEL 被移除（交给代理 default 档兜底，与全局 takeover 一致）
-        assert!(env.get("ANTHROPIC_MODEL").is_none());
-        // BASE_URL / TOKEN 不受影响（项目侧自行覆盖为本地代理端点）
-        assert_eq!(
-            env["ANTHROPIC_BASE_URL"],
-            "https://open.bigmodel.cn/api/anthropic"
-        );
-        assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "tok-glm");
-    }
-
-    #[test]
-    fn rewrite_claude_model_env_to_aliases_noop_without_model_env() {
-        // 没有配置模型映射时不应崩、不应误删其它 env
-        let mut config = json!({
-            "env": { "ANTHROPIC_BASE_URL": "https://x", "ANTHROPIC_AUTH_TOKEN": "t" }
-        });
-        ProxyService::rewrite_claude_model_env_to_aliases(&mut config);
-        let env = config["env"].as_object().unwrap();
-        assert_eq!(env["ANTHROPIC_BASE_URL"], "https://x");
-        assert_eq!(env.len(), 2, "无模型字段时不应当插入任何别名");
     }
 
     #[test]

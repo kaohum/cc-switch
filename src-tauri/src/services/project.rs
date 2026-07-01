@@ -372,15 +372,10 @@ impl ProjectService {
 
         // proxy 模式（方案 A）：覆盖 base_url/token 指向 cc-switch proxy + 项目路径
         if crate::settings::get_settings().enable_local_proxy {
-            // 与全局 takeover 同构：把 provider 的具体模型名改写成 claude-* 别名，
-            // 真名存 _NAME。Claude Code 据此发送别名，由代理映射到项目绑定 provider
-            // 的真实模型——避免具体名落到 model_mapper 的 default 兜底被错误改写
-            // （项目路由下「glm-4.5-air → glm-5.2」错路由的根因）。幂等的 model_mapper
-            // 兜底仍在，但走别名后命中快速关键字分支，且与全局行为一致。
-            // 仅改写 *_MODEL/*_NAME，BASE_URL/TOKEN 在下方另行覆盖为项目端点。
-            crate::services::proxy::ProxyService::rewrite_claude_model_env_to_aliases(
-                &mut sanitized,
-            );
+            // 保留 provider 的具体模型名原样写入——Claude Code /model 菜单据此显示
+            // 真实模型名（如 glm-4.5-air）；路由 correctness 由 model_mapper 的
+            // is_configured_target 幂等保护承担（发出的具体名命中已配置目标即透传）。
+            // 不写 claude-* 别名：那是 cc-switch 自定义短别名，CC 不识别会显示原始串。
             let listen = futures::executor::block_on(db.get_global_proxy_config()).ok();
             let host = listen
                 .as_ref()
@@ -1085,13 +1080,13 @@ mod tests {
         );
     }
 
-    /// proxy 模式下，项目 settings.local.json 必须把 provider 的具体模型名改写成
-    /// 标准 `claude-*` 别名（真名存 `_NAME`），与全局 takeover 同构——这样 Claude Code
-    /// 发送别名，由本地代理映射到项目绑定 provider 的真实模型，避免具体名落到
-    /// model_mapper 的 default 兜底被错误改写（SLG `glm-4.5-air → glm-5.2` 的根因）。
+    /// proxy 模式下，项目 settings.local.json 必须保留 provider 的具体模型名原样写入
+    /// （不改写成 claude-* 别名），这样 Claude Code /model 菜单显示真实模型名（如
+    /// glm-4.5-air）。路由 correctness 由 model_mapper 的 is_configured_target 幂等
+    /// 保护承担。仅 BASE_URL/TOKEN 覆盖为项目级代理端点。
     #[test]
     #[serial]
-    fn write_claude_to_project_proxy_mode_rewrites_models_to_claude_aliases() {
+    fn write_claude_to_project_proxy_mode_keeps_concrete_model_names() {
         let home = TempHome::new();
         // 强制启用本地代理（项目级路由依赖 proxy 模式）。
         // AppSettings 用 serde rename_all="camelCase"，故键名是 enableLocalProxy。
@@ -1130,17 +1125,26 @@ mod tests {
         .expect("parse");
         let env = &v["env"];
 
-        // 具体模型名 → claude-* 别名（opus 带 [1M]）
-        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-haiku-4-5");
-        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-4-6");
-        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "claude-opus-4-8[1M]");
-        // 真实模型名存入 _NAME（Claude Code 模型菜单显示用）
-        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"], "glm-4.5-air");
-        // ANTHROPIC_MODEL 被移除（交给代理 default 档兜底）
+        // 具体模型名原样保留（CC /model 菜单据此显示真实名）
+        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "glm-4.5-air");
+        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "glm-5.1");
+        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "glm-5.2[1M]");
+        // 不写 claude-* 别名（cc-switch 自定义短别名 CC 不识别）
         assert!(
-            env.get("ANTHROPIC_MODEL").is_none(),
-            "proxy 模式不应写入具体 default 模型名"
+            !env["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("claude-"),
+            "不应再写入 claude-* 别名，实际: {:?}",
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
         );
+        // 不写 *_NAME 字段（具体名自显示，无需 _NAME）
+        assert!(
+            env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME").is_none(),
+            "不应写入 _NAME 字段"
+        );
+        // ANTHROPIC_MODEL（default 档具体名）保留，不再被移除
+        assert_eq!(env["ANTHROPIC_MODEL"], "glm-5.2");
         // BASE_URL 指向项目级代理端点
         assert!(
             env["ANTHROPIC_BASE_URL"]
