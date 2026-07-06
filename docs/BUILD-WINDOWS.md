@@ -177,24 +177,21 @@ build 完成后，在**干净环境**（卸载旧版 CC Switch）测试：
 
 ---
 
-## 九、CI 自动 build（GitHub Actions）
+## 九、CI（已移除 release workflow）
 
-本仓库 `.github/workflows/release.yml` 配置了 3 平台 CI（ubuntu/windows/macos）。
+本 fork **不再用 GitHub Actions 出包**，发版一律走本地 build（见第三节）。历史上有过 `.github/workflows/release.yml`（3 平台 CI，tag 触发），因 GitHub billing 锁定 + fork 无签名证书，已在 `v3.16.5-projects` 移除（commit `7c20bb28`）。
 
+**现状**：
+- tag（如 `v3.16.5-projects`）仍作为**版本标记**使用，只是不再触发发版 CI
+- `.github/workflows/` 剩余的 `ci.yml`（lint/test）、`claude.yml`（AI 代码审查）、`stale.yml` 是 **upstream 维护**的，保留；它们在 push/PR 时可能运行，但不产出安装包，billing 锁定时会失败（不影响仓库与 tag）
+
+**想恢复 CI 发版**（需先解决 GitHub billing，否则 workflow 会一直失败）：从历史取回 release.yml
 ```bash
-# push tag 触发（自动出 Win+Mac+Linux）
-git tag v3.16.4-projects
-git push origin v3.16.4-projects
-
-# 或手动触发
-"/c/Program Files/GitHub CLI/gh.exe" workflow run release.yml --repo kaohum/cc-switch
+git show v3.16.4-projects:.github/workflows/release.yml > .github/workflows/release.yml
+git add .github/workflows/release.yml && git commit -m "ci: restore release workflow"
 ```
-
-> ⚠️ **CI 当前阻塞**：GitHub 账号 billing 锁定（"account locked due to a billing issue"）。
-> 解决：去 https://github.com/settings/billing 处理（更新卡 / 降 Free plan）。
-> 解决后 CI 自动恢复，无需改代码。
 
 ---
 
-**最后更新**：2026-06-29
+**最后更新**：2026-07-06
 **维护者**：陈昊然（基于 farion1231/cc-switch fork）
