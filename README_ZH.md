@@ -126,6 +126,11 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 </tr>
 
 <tr>
+<td width="180"><a href="https://code0.ai?source=ccswitch"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>感谢 <a href="https://code0.ai?source=ccswitch">code0.ai</a> 赞助本项目！code0.ai 是专为开发者打造的 AI 编程服务平台，支持 Claude Code、Codex、Gemini 等主流 AI 编程能力，帮助个人开发者和团队更稳定、更高效地使用 AI Agent 完成代码开发、调试与自动化任务。ccswitch 用户可通过 <a href="https://code0.ai?source=ccswitch">code0.ai 官网</a> 联系客服领取测试额度，体验高效稳定的 AI 编程服务！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
 <td>感谢 ClaudeCN 赞助本项目！ClaudeCN 由是一家实体企业运营的企业级AI中转平台。平台可提供高可用性的商用API服务，提供Claude、GPT、Deepseek等热门模型，支持企业采购流程，可对公打款、签约，服务合规有保障。点击<a href="https://claudecn.top">此链接</a>注册！</td>
 </tr>
@@ -168,6 +173,11 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 <tr>
 <td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
 <td>感谢 ZetaAPI 赞助本项目！ZetaAPI 主打模型不掺水、保真不降智、价格低至官方价 35 折，平台不混量、不暗中替换低质量模型、不做虚假路由，支持 Claude Code、Codex、Gemini、ChatGPT 等主流模型接入，帮助用户在保证模型质量的同时大幅降低 API 使用成本。同时，ZetaAPI 提供企业级 SLA 稳定性保障、标准接口兼容、一个 Key 接入多模型、快速集成、按量计费等能力，适用于 AI 产品、代码生成、企业内部工具、客服系统、内容生产和自动化流程等场景。若经验证发现模型质量与标称不符，ZetaAPI 承诺假一赔十，让用户用得更稳定、更透明、更放心。通过<a href="https://zetaapi.ai/go/ccs">此链接</a>注册，并在首次充值时使用优惠码 CC-SWITCH，即可享受 CC Switch 用户专属的首次充值九折优惠！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
+<td>感谢 <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> 赞助本项目！NekoCode 为开发者提供稳定、高效、可靠的 Claude、Codex 等 AI 模型 API 中转服务，价格透明，接入便捷，支持灵活的按量计费。CC Switch 用户专享 9 折福利：通过 <a href="https://nekocode.ai?aff=CCSWITCH">此链接</a> 注册，并在充值时输入优惠码 <code>cc-switch</code>，即可享受充值 9 折优惠！</td>
 </tr>
 
 </table>
@@ -249,7 +259,7 @@ CC Switch 支持七个工具：**Claude Code**、**Claude Desktop**、**Codex**�
 <details>
 <summary><strong>切换供应商之后我的插件配置怎么不见了？</strong></summary>
 
-CC Switch 使用“通用配置片段”功能，在不同的供应商之间传递 Key 和请求地址之外的通用数据，您可以在“编辑供应商”菜单的“通用配置面板”里，点击“从当前供应商提取”，把所有的通用数据提取到通用配置中，之后在新建“供应商”的时候，只要勾选“写入通用配置”（默认勾选），就会把插件等数据写入到新的供应商配置中。您的所有配置项都会保存在运行本软件的时候，第一次导入的默认供应商里面，不会丢失。
+CC Switch 使用“通用配置片段”功能，在不同的供应商之间传递 Key 和请求地址之外的通用数据，您可以在“编辑供应商”菜单的“通用配置面板”里，点击“从当前供应商提取”，把所有的通用数据提取到通用配置中，之后在新建“供应商”的时候，只要勾选“应用通用配置”（默认勾选），就会把插件等数据写入到新的供应商配置中。您的所有配置项都会保存在运行本软件的时候，第一次导入的默认供应商里面，不会丢失。
 
 </details>
 
@@ -284,6 +294,19 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 - **备份**：`~/.cc-switch/backups/`（自动轮换，保留最近 10 个）
 - **SKILLS**：`~/.cc-switch/skills/`（默认通过软链接连接到对应应用）
 - **技能备份**：`~/.cc-switch/skill-backups/`（卸载前自动创建，保留最近 20 个）
+
+</details>
+
+<details>
+<summary><strong>Linux（Wayland + NVIDIA）：网页内容点不动、缩放后黑屏</strong></summary>
+
+AppImage 会强制 `GDK_BACKEND=x11`（走 XWayland）以规避历史上的原生 Wayland 崩溃。但在较新的 Wayland + NVIDIA 环境下，这会导致网页内容区点不动（标题栏按钮仍可点）、窗口缩放后黑屏。可用内置的逃生开关切回原生 Wayland：
+
+```bash
+CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
+```
+
+如果你是从桌面图标启动的，请把它写进 `.desktop` 的 `Exec=` 行（如 `env CC_SWITCH_GDK_BACKEND=wayland /path/to/AppImage`），或在会话环境中设置。该变量是通用的：在 tiling Wayland 合成器（sway/Hyprland）下若出现点击失效，可反过来设 `CC_SWITCH_GDK_BACKEND=x11`。不设置则保持默认行为。
 
 </details>
 

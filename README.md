@@ -125,6 +125,11 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 </tr>
 
 <tr>
+<td width="180"><a href="https://code0.ai?source=ccswitch"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>Thanks to <a href="https://code0.ai?source=ccswitch">code0.ai</a> for sponsoring this project! code0.ai is an AI coding service platform built for developers, supporting Claude Code, Codex, Gemini, and other mainstream AI coding capabilities. It helps individual developers and teams use AI Agents more stably and efficiently for coding, debugging, refactoring, and automation workflows. ccswitch users can contact customer support via the <a href="https://code0.ai?source=ccswitch">code0.ai website</a> to claim test credits and experience a reliable AI coding service.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
 <td>Thanks to ClaudeCN for sponsoring this project! ClaudeCN is an enterprise-grade AI gateway platform operated by a registered company. It delivers high-availability commercial API access to popular models including Claude, GPT, and DeepSeek, and is built around formal enterprise procurement workflows — corporate bank transfers, signed contracts, and full compliance. Register via <a href="https://claudecn.top">this link</a>!</td>
 </tr>
@@ -167,6 +172,11 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 <tr>
 <td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
 <td>Thanks to ZetaAPI for sponsoring this project! ZetaAPI focuses on real model fidelity, no watered-down responses, no quality degradation, and pricing as low as 35% of official rates. The platform does not mix traffic, secretly replace models with lower-quality alternatives, or use fake model routing. It supports Claude Code, Codex, Gemini, ChatGPT, and other mainstream AI models, helping users significantly reduce API costs while maintaining reliable model quality. At the same time, ZetaAPI provides enterprise-grade SLA-backed stability, standard API compatibility, one API key for multiple models, fast integration, and pay-as-you-go billing, making it suitable for AI products, coding agents, internal business tools, customer service systems, content generation, and automation workflows. If any model is verified to be inconsistent with its stated quality, ZetaAPI backs it with a 10x compensation guarantee, giving users a more stable, transparent, and trustworthy experience. Register via <a href="https://zetaapi.ai/go/ccs">this link</a> and use the promo code CC-SWITCH during your first recharge to enjoy an exclusive 10% discount on your first top-up, just for CC Switch users!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
+<td>Thanks to <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> for sponsoring this project! NekoCode provides developers with a stable, efficient, and reliable API relay service for Claude, Codex, and other AI models. With transparent pricing and flexible pay-as-you-go billing, it offers a simple and cost-effective way to access AI models. CC Switch users can enjoy an exclusive 10% discount: register via <a href="https://nekocode.ai?aff=CCSWITCH">this link</a> and enter promo code <code>cc-switch</code> during recharge to receive 10% off your top-up!</td>
 </tr>
 
 </table>
@@ -281,6 +291,19 @@ Add an official provider from the preset list. After switching to it, run the Lo
 - **Backups**: `~/.cc-switch/backups/` (auto-rotated, keeps 10 most recent)
 - **Skills**: `~/.cc-switch/skills/` (symlinked to corresponding apps by default)
 - **Skill Backups**: `~/.cc-switch/skill-backups/` (created automatically before uninstall, keeps 20 most recent)
+
+</details>
+
+<details>
+<summary><strong>Linux (Wayland + NVIDIA): clicks don't register and the window black-screens on resize</strong></summary>
+
+The AppImage forces `GDK_BACKEND=x11` (XWayland) to avoid a historical native-Wayland crash. On newer Wayland + NVIDIA setups this can leave the web content area unclickable (the title-bar buttons still work) and black-screen on resize. Launch with the opt-in escape hatch to switch back to native Wayland:
+
+```bash
+CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
+```
+
+If you launch from a desktop icon, add it to the `.desktop` `Exec=` line (e.g. `env CC_SWITCH_GDK_BACKEND=wayland /path/to/AppImage`) or set it in your session environment. The variable is generic: on tiling Wayland compositors (sway/Hyprland) where clicks don't register, try `CC_SWITCH_GDK_BACKEND=x11` instead. Leaving it unset keeps the default behavior.
 
 </details>
 

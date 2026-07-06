@@ -125,6 +125,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
+<td width="180"><a href="https://code0.ai?source=ccswitch"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている <a href="https://code0.ai?source=ccswitch">code0.ai</a> に感謝します！code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini などの主要な AI コーディング機能に対応しています。個人開発者やチームが、コーディング、デバッグ、リファクタリング、自動化ワークフローで AI Agent をより安定かつ効率的に活用できるよう支援します。ccswitch ユーザーは <a href="https://code0.ai?source=ccswitch">code0.ai 公式サイト</a> からカスタマーサポートに連絡することで、テストクレジットを受け取り、信頼性の高い AI コーディングサービスを体験できます。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
 <td>本プロジェクトのスポンサーである ClaudeCN に感謝いたします！ClaudeCN は、実体のある企業によって運営されるエンタープライズ向け AI ゲートウェイプラットフォームです。Claude、GPT、DeepSeek など主要モデルへの高可用な商用 API アクセスを提供し、企業の調達プロセスにも対応 — 法人振込や正式契約に対応し、コンプライアンス面でも安心してご利用いただけます。<a href="https://claudecn.top">こちら</a>からご登録ください！</td>
 </tr>
@@ -167,6 +172,11 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <tr>
 <td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
 <td>本プロジェクトをご支援いただいている ZetaAPI に感謝します！ZetaAPI は、モデル品質の忠実性、水増しなし、性能劣化なし、公式価格の 35% から利用できる低価格を主な特徴としています。プラットフォームはトラフィックの混在、低品質モデルへの密かな切り替え、虚偽のモデルルーティングを行わず、Claude Code、Codex、Gemini、ChatGPT などの主要 AI モデルに対応しており、モデル品質を維持しながら API 利用コストを大幅に削減できます。同時に、ZetaAPI はエンタープライズ級の SLA 安定性保証、標準 API 互換、1つの Key による複数モデル接続、迅速な導入、従量課金などの機能を提供し、AI プロダクト、コード生成、企業内ツール、カスタマーサポート、コンテンツ生成、自動化ワークフローなどの用途に適しています。万が一、モデル品質が表記内容と一致しないことが確認された場合、ZetaAPI は 10 倍補償保証を提供し、ユーザーがより安定して、透明性高く、安心して利用できる環境を実現します。<a href="https://zetaapi.ai/go/ccs">こちらのリンク</a>から登録し、初回チャージ時にプロモコード CC-SWITCH を使用すると、CC Switch ユーザー限定の初回チャージ 10% オフ特典をご利用いただけます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> に感謝します！NekoCode は、Claude や Codex などの AI モデルに対応した、安定性・効率性・信頼性に優れた API 中継サービスを提供しています。料金体系は明瞭で、柔軟な従量課金にも対応しています。CC Switch ユーザー限定の 10%オフ特典：<a href="https://nekocode.ai?aff=CCSWITCH">こちらのリンク</a> から登録し、チャージ時にクーポンコード <code>cc-switch</code> を入力すると、チャージが 10%オフになります！</td>
 </tr>
 
 </table>
@@ -248,7 +258,7 @@ CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**�
 <details>
 <summary><strong>プロバイダを切り替えた後、プラグイン設定が消えてしまいました。どうすればよいですか？</strong></summary>
 
-CC Switch には「共有設定スニペット」機能があり、APIキーやエンドポイント以外の共通データをプロバイダ間で引き継ぐことができます。「プロバイダ編集」→「共有設定パネル」→「現在のプロバイダから抽出」をクリックして、すべての共通データを保存してください。新しいプロバイダを作成する際に「共有設定を書き込む」にチェック（デフォルトで有効）を入れれば、プラグインなどのデータが新しいプロバイダ設定に含まれます。すべての設定項目は、アプリ初回起動時にインポートされたデフォルトプロバイダに保存されており、失われることはありません。
+CC Switch には「共有設定スニペット」機能があり、APIキーやエンドポイント以外の共通データをプロバイダ間で引き継ぐことができます。「プロバイダ編集」→「共有設定パネル」→「現在のプロバイダから抽出」をクリックして、すべての共通データを保存してください。新しいプロバイダを作成する際に「共有設定を適用」にチェック（デフォルトで有効）を入れれば、プラグインなどのデータが新しいプロバイダ設定に含まれます。すべての設定項目は、アプリ初回起動時にインポートされたデフォルトプロバイダに保存されており、失われることはありません。
 
 </details>
 
@@ -281,6 +291,19 @@ CC Switch は「最小限の介入」という設計原則に従っています�
 - **バックアップ**: `~/.cc-switch/backups/`（自動ローテーション、最新 10 件を保持）
 - **Skills**: `~/.cc-switch/skills/`（デフォルトでシンボリックリンクにより対応アプリに接続）
 - **Skill バックアップ**: `~/.cc-switch/skill-backups/`（アンインストール前に自動作成、最新 20 件を保持）
+
+</details>
+
+<details>
+<summary><strong>Linux（Wayland + NVIDIA）：Web コンテンツがクリックできない・リサイズで黒画面になる</strong></summary>
+
+AppImage は過去のネイティブ Wayland クラッシュを避けるため `GDK_BACKEND=x11`（XWayland）を強制します。新しい Wayland + NVIDIA 環境ではこれが原因で Web コンテンツ領域がクリックできなくなり（タイトルバーのボタンは動作します）、リサイズ時に黒画面になることがあります。内蔵のエスケープハッチでネイティブ Wayland に戻せます：
+
+```bash
+CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
+```
+
+デスクトップアイコンから起動する場合は、`.desktop` の `Exec=` 行に追記するか（例：`env CC_SWITCH_GDK_BACKEND=wayland /path/to/AppImage`）、セッション環境で設定してください。この変数は汎用です：タイル型 Wayland コンポジタ（sway/Hyprland）でクリックが効かない場合は、逆に `CC_SWITCH_GDK_BACKEND=x11` を試してください。未設定の場合は既定の動作のままです。
 
 </details>
 
