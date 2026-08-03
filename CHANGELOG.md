@@ -53,6 +53,8 @@ cc-switch fork 拓展：项目工程目录管理 + 项目级 Claude Provider 绑
   - **项目 writer 直接写具体模型名**：proxy 模式下保留 provider 的具体模型名原样写入（仅覆盖 `BASE_URL/TOKEN` 指向项目端点），由上述守卫承担路由——Claude Code `/model` 菜单据此显示真实模型名（如 `glm-4.5-air`）。**不写 `claude-*` 别名**：那是 cc-switch 自定义短别名，CC 不识别、菜单会显示原始别名串。`85fba5bc` 曾额外用「别名改写」一道，现确认守卫单独即足、别名改写多余且引入显示问题，故撤回并删多余的 `rewrite_claude_model_env_to_aliases`。**现存已写入别名的项目文件**仍由守卫保证路由正确；显示需在项目设置重选 provider 触发覆盖。
 - **解绑 provider 不写盘**：清空项目 provider 时 `set_claude_provider` 跳过 `settings.local.json` 写入，残留失效的项目代理端点（`/claude/project/<id>/`）导致 Claude Code 报 `NoProvidersConfigured`。修复：解绑时调 `strip_claude_env_from_project` 移除 cc-switch 管理的 `env` 段（保留用户 hooks/plugins 等非 env 字段；只剩空对象则删文件），Claude Code 回退到全局配置保持可用（最小侵入）。
 - **项目 settings 写盘失败静默**：`settings.local.json` 写入失败（如项目目录尚未 clone）只 `log::warn`，前端仍弹「设置成功」。修复：`set_project_claude_provider` 返回 `SetProviderResult { project, writtenPath, writeWarning }`，写盘失败把原因填 `writeWarning`，前端 `toast.warning` 提示（绑定/解绑本身仍先落库、不阻塞）。
+- **修改 provider 配置不级联更新项目目录**：项目目录 `settings.local.json` 写的是绑定时的配置快照，改 provider 的 base_url/模型等设置后，绑定它的项目目录仍停留在旧值（如旧端点、旧模型）。修复：`ProviderService::update` 在 Claude provider 保存成功后，遍历所有绑定该 provider 的项目并逐个调用 `write_claude_to_project` 重写（新增 `rewrite_projects_for_provider`，best-effort：单项目失败只 warn 不阻断保存）。配套测试 `update_claude_provider_rewrites_bound_project_directories` 先复现缺陷后验证修复。
+- **项目卡片切换 provider 自动写盘（确认既有行为 + 补测试）**：项目详情页的 provider 下拉（`ProviderSelectForProject`）切换时，`set_claude_provider` 绑定即写盘——`env` 整体替换（旧 provider 的 `ANTHROPIC_*` 残留清除）、其他字段深度合并保留用户个性化配置。补充测试 `switching_project_provider_rewrites_settings_local_json` 固化该行为（A1→A2 切换后 base_url 更新、A1 残留清除）。
 
 ### Tech debt / 已知限制
 
