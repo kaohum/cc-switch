@@ -2418,6 +2418,80 @@ requires_openai_auth = true
             );
         });
     }
+
+    /// 修改 Claude provider 后，所有绑定该 provider 的项目目录 settings.local.json
+    /// 必须级联重写（写的是 provider 配置快照，不刷新会停留在旧值）。
+    #[test]
+    #[serial]
+    fn update_claude_provider_rewrites_bound_project_directories() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let dir = TempDir::new().expect("tmp");
+        let project_path = dir.path().to_string_lossy().to_string();
+
+        let provider = crate::provider::Provider::with_id(
+            "a1".into(),
+            "A1".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://old.example",
+                    "ANTHROPIC_AUTH_TOKEN": "tok-old"
+                }
+            }),
+            None,
+        );
+        db.save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider");
+
+        // 创建项目并绑定 A1（create 带 provider 会自动写盘）
+        let _project = crate::services::ProjectService::create(
+            &db,
+            crate::services::CreateProjectRequest {
+                name: "A".into(),
+                path: project_path,
+                description: None,
+                claude_provider_id: Some("a1".into()),
+                icon: None,
+                icon_color: None,
+            },
+        )
+        .expect("create project");
+        let settings = dir.path().join(".claude").join("settings.local.json");
+        assert!(settings.exists(), "绑定后应写入 settings.local.json");
+        let old_content = fs::read_to_string(&settings).expect("read old");
+        assert!(
+            old_content.contains("https://old.example"),
+            "写入的应是旧 base_url"
+        );
+
+        // 修改 provider A1（换 base_url）
+        let updated = crate::provider::Provider::with_id(
+            "a1".into(),
+            "A1".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://new.example",
+                    "ANTHROPIC_AUTH_TOKEN": "tok-new"
+                }
+            }),
+            None,
+        );
+        ProviderService::update(&state, AppType::Claude, None, updated.clone())
+            .expect("update provider");
+
+        // 项目目录必须级联重写为新值
+        let new_content = fs::read_to_string(&settings).expect("read new");
+        assert!(
+            new_content.contains("https://new.example"),
+            "修改 provider 后项目目录应重写为新 base_url，实际: {new_content}"
+        );
+        assert!(
+            !new_content.contains("https://old.example"),
+            "旧 base_url 不应残留"
+        );
+    }
 }
 
 impl ProviderService {
@@ -2822,7 +2896,43 @@ impl ProviderService {
             }
         }
 
+        // 项目级 live config 级联：修改 Claude provider 后，所有绑定该 provider 的
+        // 项目目录 settings.local.json 需要重写——项目目录里写的是 provider 配置快照，
+        // 不刷新会停留在旧值（如改了 base_url/模型后项目目录仍指向旧端点）。
+        // best-effort：单个项目失败只 warn，不阻断保存（与 set_claude_provider 的
+        // 写盘语义一致）。
+        if matches!(app_type, AppType::Claude) {
+            Self::rewrite_projects_for_provider(state, &provider.id);
+        }
+
         Ok(true)
+    }
+
+    /// 重写所有绑定指定 Claude provider 的项目目录 `.claude/settings.local.json`。
+    ///
+    /// provider 的 `env` / common config 修改后，项目目录里写的是绑定时的配置快照，
+    /// 需要刷新才能反映最新配置。best-effort：查询项目列表或单个项目写盘失败只 log
+    /// warn，不阻断主流程（与 [`ProjectService::set_claude_provider`] 的写盘语义一致）。
+    fn rewrite_projects_for_provider(state: &AppState, provider_id: &str) {
+        let projects = match state.db.list_projects(false) {
+            Ok(projects) => projects,
+            Err(e) => {
+                log::warn!("级联重写项目目录失败：查询项目列表异常: {e}");
+                return;
+            }
+        };
+        for project in projects {
+            if project.claude_provider_id.as_deref() == Some(provider_id) {
+                if let Err(e) =
+                    crate::services::ProjectService::write_claude_to_project(&state.db, &project.id)
+                {
+                    log::warn!(
+                        "项目 '{}' 重写 settings.local.json 失败（provider {provider_id} 已更新）: {e}",
+                        project.id
+                    );
+                }
+            }
+        }
     }
 
     /// Delete a provider

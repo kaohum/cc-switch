@@ -1154,4 +1154,51 @@ mod tests {
             env["ANTHROPIC_BASE_URL"]
         );
     }
+
+    /// 项目卡片下拉切换 provider（A1 → A2）时必须自动写盘：settings.local.json
+    /// 的 env 整体替换为 A2，A1 的残留 key 清除。
+    #[test]
+    #[serial]
+    fn switching_project_provider_rewrites_settings_local_json() {
+        let _home = TempHome::new();
+        let db = Database::memory().expect("memory db");
+        let dir = TempDir::new().expect("tmp");
+        let project_path = dir.path().to_string_lossy().to_string();
+
+        seed_provider_with_env(&db, "a1", "https://a1.example");
+        seed_provider_with_env(&db, "a2", "https://a2.example");
+
+        let project = ProjectService::create(&db, req("A", &project_path)).expect("create");
+        ProjectService::set_claude_provider(&db, &project.id, Some("a1")).expect("bind a1");
+
+        let settings = dir.path().join(".claude").join("settings.local.json");
+        let v1: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).expect("read"))
+                .expect("parse");
+        assert!(
+            v1["env"]["ANTHROPIC_BASE_URL"]
+                .as_str()
+                .is_some_and(|s| s.contains("a1.example")),
+            "绑定 A1 后应写入 A1 的 base_url"
+        );
+
+        // 下拉切换到 A2 → 自动写盘
+        ProjectService::set_claude_provider(&db, &project.id, Some("a2")).expect("switch to a2");
+
+        let v2: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).expect("read"))
+                .expect("parse");
+        assert!(
+            v2["env"]["ANTHROPIC_BASE_URL"]
+                .as_str()
+                .is_some_and(|s| s.contains("a2.example")),
+            "切换后应写入 A2 的 base_url"
+        );
+        assert!(
+            v2["env"]["ANTHROPIC_BASE_URL"]
+                .as_str()
+                .is_none_or(|s| !s.contains("a1.example")),
+            "env 整体替换，A1 的残留 base_url 必须清除"
+        );
+    }
 }
