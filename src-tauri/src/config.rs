@@ -191,10 +191,12 @@ pub fn get_app_config_dir() -> PathBuf {
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
     // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
+    // 测试隔离：CC_SWITCH_TEST_HOME 显式指向测试目录时跳过该回退，避免测试
+    // 读到真实用户目录的旧库/文件（Windows 上 HOME 常被设置）。
     #[cfg(windows)]
     {
         let default_db = default_dir.join("cc-switch.db");
-        if !default_db.exists() {
+        if !default_db.exists() && std::env::var_os("CC_SWITCH_TEST_HOME").is_none() {
             if let Ok(home_env) = std::env::var("HOME") {
                 let trimmed = home_env.trim();
                 if !trimmed.is_empty() {

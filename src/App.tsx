@@ -31,7 +31,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
-import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
@@ -44,7 +44,6 @@ import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -60,6 +59,7 @@ import {
   DRAG_REGION_STYLE,
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
+import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -130,6 +130,7 @@ const VALID_APPS: AppId[] = [
   "claude-desktop",
   "codex",
   "gemini",
+  "grokbuild",
   "opencode",
   "openclaw",
   "hermes",
@@ -197,6 +198,7 @@ function App() {
     "claude-desktop": true,
     codex: true,
     gemini: true,
+    grokbuild: true,
     opencode: true,
     openclaw: true,
     hermes: true,
@@ -207,6 +209,7 @@ function App() {
     if (visibleApps["claude-desktop"]) return "claude-desktop";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
+    if (visibleApps.grokbuild) return "grokbuild";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
@@ -239,6 +242,7 @@ function App() {
       currentView === "sessions" &&
       sharedFeatureApp !== "claude" &&
       sharedFeatureApp !== "codex" &&
+      sharedFeatureApp !== "grokbuild" &&
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
@@ -259,9 +263,6 @@ function App() {
 
   const effectiveEditingProvider = useLastValidValue(editingProvider);
   const effectiveUsageProvider = useLastValidValue(usageProvider);
-
-  const toolbarRef = useRef<HTMLDivElement>(null);
-  const isToolbarCompact = useAutoCompact(toolbarRef);
 
   useUsageCacheBridge();
 
@@ -308,6 +309,7 @@ function App() {
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
+    sharedFeatureApp === "grokbuild" ||
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
@@ -397,6 +399,21 @@ function App() {
     } catch (error) {
       console.error("[App] Failed to update tray menu", error);
     }
+  });
+
+  // 应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接；
+  // proxy 状态由后端直接改 DB，不走 mutation，必须显式刷新）
+  useTauriEvent("profile-applied", async () => {
+    await queryClient.invalidateQueries({ queryKey: ["profiles"] });
+    await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
+    await queryClient.invalidateQueries({ queryKey: ["skills"] });
+    await queryClient.invalidateQueries({
+      queryKey: proxyKeys.takeoverStatus,
+    });
+    await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+    await queryClient.invalidateQueries({
+      queryKey: ["providers", "claude-desktop"],
+    });
   });
 
   useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
@@ -1270,10 +1287,16 @@ function App() {
                     )}
                 </div>
               )}
-            <div
-              ref={toolbarRef}
-              className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"
-            >
+            {currentView === "providers" &&
+              (settingsData?.showProfileSwitcher ?? true) && (
+                <div
+                  className="flex shrink-0 items-center"
+                  style={{ WebkitAppRegion: "no-drag" } as any}
+                >
+                  <ProfileSwitcher activeApp={activeApp} />
+                </div>
+              )}
+            <div className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2">
               <div
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
                 style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1392,7 +1415,6 @@ function App() {
                       activeApp={activeApp}
                       onSwitch={setActiveApp}
                       visibleApps={visibleApps}
-                      compact={isToolbarCompact}
                     />
 
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
@@ -1403,7 +1425,9 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : "default"
+                                : activeApp === "grokbuild"
+                                  ? "grokbuild"
+                                  : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
