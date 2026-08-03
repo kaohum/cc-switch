@@ -301,9 +301,9 @@ impl ProjectService {
     ///   深度合并——保留项目已有的个性化项，同名冲突时 common config 优先；
     /// - existing 独有、cc-switch 未管理的字段（如用户自加的 `hooks` / `enabledMcpjsonServers`）原样保留。
     ///
-    /// 写前备份到 `settings.local.json.ccs.bak`，原子写入。选 `settings.local.json` 而非
-    /// `settings.json`：Claude Code 官方约定 local > project > user，本地个人配置默认 .gitignore，
-    /// 团队共享的 `settings.json` 不会被 cc-switch 污染。
+    /// 原子写入（临时文件 + rename），不产生 `.bak` 备份——旧文件直接覆盖。
+    /// 选 `settings.local.json` 而非 `settings.json`：Claude Code 官方约定 local > project > user，
+    /// 本地个人配置默认 .gitignore，团队共享的 `settings.json` 不会被 cc-switch 污染。
     pub fn write_claude_to_project(
         db: &Database,
         project_id: &str,
@@ -347,22 +347,12 @@ impl ProjectService {
             Value::Object(Map::new())
         };
         if !existing.is_object() {
-            // 存在但不是对象（如用户写成数组）→ 备份后当作空对象，避免覆盖用户数据
+            // 存在但不是对象（如用户写成数组）→ 当作空对象合并，避免覆盖用户数据
             log::warn!(
-                "{} 顶层不是 JSON 对象，按空对象合并（已备份为 .bak）",
+                "{} 顶层不是 JSON 对象，按空对象合并",
                 settings_path.display()
             );
-            let backup = settings_path.with_extension("json.ccs.bak");
-            let _ = std::fs::copy(&settings_path, &backup);
             existing = Value::Object(Map::new());
-        }
-
-        // 写前备份原文件
-        if settings_path.exists() {
-            let backup = claude_dir.join("settings.local.json.ccs.bak");
-            if let Err(e) = std::fs::copy(&settings_path, &backup) {
-                log::warn!("备份 {} 失败: {e}", settings_path.display());
-            }
         }
 
         // 2) 构造 cc-switch 管理的 effective settings + sanitize
@@ -861,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn write_claude_to_project_backs_up_existing_settings() {
+    fn write_claude_to_project_overwrites_without_leaving_backup() {
         let db = Database::memory().expect("memory db");
         let dir = TempDir::new().expect("tmp");
         let claude_dir = dir.path().join(".claude");
@@ -874,10 +864,12 @@ mod tests {
         let project = ProjectService::create(&db, req("A", &project_path)).expect("create");
         ProjectService::set_claude_provider(&db, &project.id, Some("packy")).expect("bind");
 
+        // 不产生 .bak 备份（直接覆盖旧文件）
         let backup = claude_dir.join("settings.local.json.ccs.bak");
-        assert!(backup.exists(), "应备份旧 settings.local.json 到 .ccs.bak");
-        let backup_content = std::fs::read_to_string(&backup).expect("read backup");
-        assert!(backup_content.contains("old"), "备份应保留旧内容");
+        assert!(
+            !backup.exists(),
+            "不应产生 settings.local.json.ccs.bak 备份"
+        );
 
         // 合并模式：settings.local.json 应保留原有 "old" 字段，同时注入 env
         let merged =
