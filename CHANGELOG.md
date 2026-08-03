@@ -38,6 +38,7 @@ cc-switch fork 拓展：项目工程目录管理 + 项目级 Claude Provider 绑
 - **重写提示 toast**：i18n `writeSuccess` 文案从 `.claude/settings.json` 改为 `.claude/settings.local.json`
 - **DB schema 升级**：v11 → v12（projects 表）→ v13（proxy_request_logs.project_id 列 + 索引）
 - **device-level settings**：保持向后兼容，`current_project_id` 字段在 settings.rs 中预留
+- **写入不再产生 `.bak` 备份**：`write_claude_to_project` 直接覆盖旧文件（原子写临时文件 + rename），移除写前备份 `settings.local.json.ccs.bak` 与顶层非对象时的 `.json.ccs.bak` 备份（保留 warn 日志 + 按空对象合并）。此前每次 provider 修改级联重写项目目录都会堆积 `.bak` 垃圾文件。
 
 ### Fixed
 
