@@ -38,7 +38,6 @@ import {
 } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
-import { useQuery } from "@tanstack/react-query";
 import { listProjects } from "@/lib/api/projects";
 import { emit } from "@tauri-apps/api/event";
 import { resolveProviderIcon } from "@/utils/providerIcon";
