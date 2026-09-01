@@ -102,6 +102,7 @@ A local reverse proxy (axum + hyper) that can hot-switch providers, convert API 
 
 ## Conventions
 
+- **每次有修改必须写 CHANGELOG.md（同一提交内）.** Fork changes go into the top `## [Unreleased] — Project Workspace & Proxy 项目级路由` block (Added / Changed / Fixed / Tech debt); upstream merges add a dated `同步上游` note there covering what was merged and how the schema/migration chain was renumbered. No behavior-affecting commit ships without its changelog entry — this includes merge follow-up fixes, schema version bumps, and release builds.
 - **Comments are bilingual.** Much of the Rust codebase has Chinese comments — this is established project style; match the surrounding file when editing (don't strip or translate existing comments).
 - **Atomic writes everywhere** for any file the user's CLI tools depend on: write to a temp path, then rename.
 - **Don't delete the active provider / don't leave a tool with zero configs** — "minimal intrusion": even if uninstalled, the CLI tool must keep working.

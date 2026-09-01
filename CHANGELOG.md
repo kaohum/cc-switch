@@ -11,7 +11,7 @@ cc-switch fork 拓展：项目工程目录管理 + 项目级 Claude Provider 绑
 
 **2026-08-03 同步上游**：`git merge upstream/main` 合并上游 v3.17.0 → v3.19.1（179 commits）。Project Workspace 与上游 v3.17 的 Project Profiles（`profiles` 表）为两个独立功能，合并后并存；schema 迁移链 fork 的 `project_id` 归因并入 v16→v17（`SCHEMA_VERSION` 17），上游 v13→v16 保留。上游并发引入 Grok Build 托管、xAI OAuth、模型定价自动同步、安全加固等（详见下方 `[3.17.0]`…`[3.19.1]` 版本块）。
 
-**2026-09-01 同步上游**：`git merge upstream/main` 合并上游 v3.19.2 → v3.20.1+（139 commits，至 `92a9b4a9`）。schema 迁移链：上游 v16→v17（会话用量去重账本）、v17→v18（会话日志字节游标）顺延为 v17→v18 / v18→v19，`SCHEMA_VERSION` 升至 **19**；fork 的 v16→v17（项目工程目录）不变。上游 `release.yml` 维持 fork 的删除（本地出包，见 `docs/BUILD-WINDOWS.md`）。上游要点：Codex 0.149 兼容（config-only 切换 + 预检修复）、ChatGPT Team 账号共存、会话日志增量扫描（auto/manual 模式 + 字节游标）、OpenCode Go 订阅用量查询、QwenCloud / Tencent Token Plan 预设、代理前缀缓存保留会话中段 system 消息等。
+**2026-09-01 同步上游**：`git merge upstream/main` 合并上游 v3.19.2 → v3.20.1+（139 commits，至 `92a9b4a9`）。schema 迁移链：上游 v16→v17（会话用量去重账本）、v17→v18（会话日志字节游标）顺延为 v17→v18 / v18→v19，`SCHEMA_VERSION` 升至 **19**；fork 的 v16→v17（项目工程目录）不变。上游 `release.yml` 维持 fork 的删除（本地出包，见 `docs/BUILD-WINDOWS.md`）。上游要点：Codex 0.149 兼容（config-only 切换 + 预检修复）、ChatGPT Team 账号共存、会话日志增量扫描（auto/manual 模式 + 字节游标）、OpenCode Go 订阅用量查询、QwenCloud / Tencent Token Plan 预设、代理前缀缓存保留会话中段 system 消息等。合并后修复（`10406164`）：恢复 `json_deep_merge` re-export（`project.rs` 依赖，上游将其改私有）、上游新增的 `handle_alpha_search` 端点补 `RequestContext::new` 第 7 参 `project_id: None`（Codex 无项目路由）、去除 `ProviderCard.tsx` 自动合并产生的重复 `useQuery` import。
 
 **Stats**: 9 commits on `feature/project-workspace` | 32 files changed | +2,300 insertions
 
