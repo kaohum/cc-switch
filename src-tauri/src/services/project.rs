@@ -11,11 +11,198 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::database::Project;
 use crate::error::AppError;
-use crate::services::provider::{
-    build_effective_settings_with_common_config, json_deep_merge, sanitize_claude_settings_for_live,
-};
+use crate::services::provider::{json_deep_merge, provider_uses_common_config};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+
+// ============================================================================
+// Claude effective-settings 构造（fork 本地移植）
+//
+// 上游 v3.21 起 live 写入改用 key-field 引擎（live/project/*.rs），不再把
+// common config 片段合并进 live 文件（"通用配置片段冻结在库里只给旧版读"）。
+// fork 的项目工作区功能写的是**项目目录** `.claude/settings.local.json`
+// （不是 live 的 `~/.claude/settings.json`），合并语义（provider env +
+// common config 深度合并进项目配置）是 fork 自有契约，有测试锁定，故把
+// 旧版 live.rs 的 Claude 路径移植到这里，避免每次上游合并都追着改。
+// ============================================================================
+
+/// Codex OAuth 经 Claude Code 路由时的上下文窗口默认值（gpt-5.6 目录）。
+const CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS: &str = "372000";
+const CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW: &str = "372000";
+/// Kimi For Coding 端点的 256K 窗口。
+const KIMI_FOR_CODING_CONTEXT_TOKENS: &str = "262144";
+
+/// 默认值只对 gpt-5.6 系列注入——所有已配置的模型都必须属于该系列。
+const CODEX_OAUTH_MODEL_ENV_KEYS: [&str; 6] = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+];
+
+fn provider_env_targets_gpt56(provider_env: Option<&Map<String, Value>>) -> bool {
+    let Some(env) = provider_env else {
+        return false;
+    };
+    let mut saw_model = false;
+    for key in CODEX_OAUTH_MODEL_ENV_KEYS {
+        let Some(value) = env.get(key) else {
+            continue;
+        };
+        let Some(model) = value.as_str() else {
+            return false;
+        };
+        let model = model.trim();
+        if model.is_empty() {
+            continue;
+        }
+        saw_model = true;
+        if !model.to_ascii_lowercase().starts_with("gpt-5.6") {
+            return false;
+        }
+    }
+    saw_model
+}
+
+fn is_kimi_for_coding_provider(provider: &crate::provider::Provider) -> bool {
+    provider
+        .settings_config
+        .pointer("/env/ANTHROPIC_BASE_URL")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(|url| url.trim_end_matches('/'))
+        == Some("https://api.kimi.com/coding")
+}
+
+/// Codex OAuth 暴露 GPT 模型 id，Claude Code 对未知模型默认 200K 窗口；
+/// 全部模型指向 gpt-5.6 时注入 372K 默认值。用户显式值优先。
+fn apply_codex_oauth_claude_context_defaults(
+    settings: &mut Value,
+    provider: &crate::provider::Provider,
+) {
+    if !provider.is_codex_oauth() {
+        return;
+    }
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+    let env = root
+        .entry("env".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(env) = env.as_object_mut() else {
+        log::warn!(
+            "Cannot apply Codex OAuth Claude context defaults for '{}': env is not an object",
+            provider.id
+        );
+        return;
+    };
+
+    let inject_defaults = provider_env_targets_gpt56(provider_env);
+    for (key, default_value) in [
+        (
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS,
+        ),
+        (
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW,
+        ),
+    ] {
+        match provider_env.and_then(|provider_env| provider_env.get(key)) {
+            Some(value) => {
+                env.insert(key.to_string(), value.clone());
+            }
+            None if inject_defaults => {
+                env.insert(key.to_string(), Value::String(default_value.to_string()));
+            }
+            // 老模型不注入默认值，同时剥掉遗留共享片段可能带进来的值
+            None => {
+                env.remove(key);
+            }
+        }
+    }
+}
+
+/// Kimi For Coding 256K 窗口默认值（`claude-` 前缀的模型 id 不读该 env，
+/// 仅当 provider 路由 kimi-for-coding 别名时生效）。
+fn apply_kimi_for_coding_context_defaults(
+    settings: &mut Value,
+    provider: &crate::provider::Provider,
+) {
+    if !is_kimi_for_coding_provider(provider) {
+        return;
+    }
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+
+    for key in [
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    ] {
+        let value = provider_env
+            .and_then(|provider_env| provider_env.get(key))
+            .cloned()
+            .unwrap_or_else(|| Value::String(KIMI_FOR_CODING_CONTEXT_TOKENS.to_string()));
+        env.insert(key.to_string(), value);
+    }
+}
+
+/// 剥掉 cc-switch 内部字段——它们绝不能写进 Claude Code 的 settings 文件。
+fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
+    let mut v = settings.clone();
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("api_format");
+        obj.remove("apiFormat");
+        obj.remove("openrouter_compat_mode");
+        obj.remove("openrouterCompatMode");
+    }
+    v
+}
+
+/// 构造写入项目目录的 Claude 生效配置：provider settings + common config 片段
+/// 深度合并（显式开启或 legacy subset 命中时）+ Codex OAuth / Kimi 窗口默认值。
+fn build_effective_claude_settings_with_common_config(
+    db: &Database,
+    provider: &crate::provider::Provider,
+) -> Result<Value, AppError> {
+    let snippet = db.get_config_snippet(AppType::Claude.as_str())?;
+    let mut effective_settings = provider.settings_config.clone();
+
+    if provider_uses_common_config(&AppType::Claude, provider, snippet.as_deref()) {
+        if let Some(snippet_text) = snippet.as_deref() {
+            let trimmed = snippet_text.trim();
+            if !trimmed.is_empty() {
+                match serde_json::from_str::<Value>(trimmed) {
+                    Ok(source) => json_deep_merge(&mut effective_settings, &source),
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to apply common config for Claude provider '{}': {err}",
+                            provider.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    apply_codex_oauth_claude_context_defaults(&mut effective_settings, provider);
+    apply_kimi_for_coding_context_defaults(&mut effective_settings, provider);
+
+    Ok(effective_settings)
+}
 
 fn now_millis() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -356,8 +543,7 @@ impl ProjectService {
         }
 
         // 2) 构造 cc-switch 管理的 effective settings + sanitize
-        let effective =
-            build_effective_settings_with_common_config(db, &AppType::Claude, &provider)?;
+        let effective = build_effective_claude_settings_with_common_config(db, &provider)?;
         let mut sanitized = sanitize_claude_settings_for_live(&effective);
 
         // proxy 模式（方案 A）：覆盖 base_url/token 指向 cc-switch proxy + 项目路径

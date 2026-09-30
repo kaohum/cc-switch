@@ -110,8 +110,13 @@ impl RequestContext {
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
-        let current_provider_id =
-            crate::settings::get_current_provider(&app_type).unwrap_or_default();
+        let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
+            .ok()
+            .flatten();
+        let current_provider_id = current_provider
+            .as_ref()
+            .map(|provider| provider.id.clone())
+            .unwrap_or_default();
 
         // 从请求体提取模型名称
         let request_model = body
@@ -135,14 +140,19 @@ impl RequestContext {
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
         //
-        // 项目级路由（方案 A）：带 project_id 时走项目的 provider，不走全局 current/failover
+        // 项目级路由（方案 A）：带 project_id 时走项目的 provider，不走全局 current/failover；
+        // 全局路由用 select_providers_with_current 复用上面已读的 current_provider，
+        // 不再重复读 live-state.json
         let providers = if let Some(pid) = project_id {
             state
                 .provider_router
                 .select_providers_for_project(pid)
                 .await
         } else {
-            state.provider_router.select_providers(app_type_str).await
+            state
+                .provider_router
+                .select_providers_with_current(app_type_str, current_provider)
+                .await
         }
         .map_err(|e| match e {
             crate::error::AppError::AllProvidersCircuitOpen => ProxyError::AllProvidersCircuitOpen,
