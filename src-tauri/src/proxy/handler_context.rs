@@ -87,10 +87,13 @@ impl RequestContext {
     /// * `app_type` - 应用类型
     /// * `tag` - 日志标签
     /// * `app_type_str` - 应用类型字符串
+    /// * `project_id` - 项目工程目录 ID（fork 项目级路由，全局路由为 None）
     /// * `stack` - Stack 模型的目标（请求体里的 `model` 已换成上游名）
     ///
     /// # Errors
     /// 返回 `ProxyError` 如果 Provider 选择失败
+    // fork 的 project_id + 上游的 stack 两个尾参并存，8 个参数超出 clippy 默认上限
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         state: &ProxyState,
         body: &serde_json::Value,
